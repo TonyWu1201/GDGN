@@ -12,7 +12,7 @@ featurizer = dc.feat.ConvMolFeaturizer()
 
 drug_feats = {}
 
-for drug in tqdm(drugs.itertuples()):
+for drug in tqdm(drugs.itertuples(), total=drugs.shape[0]):
     
     try:
         # 转换SMILES到分子对象

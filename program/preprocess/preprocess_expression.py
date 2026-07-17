@@ -16,6 +16,7 @@ depmap_to_name = dict(zip(common_cl["depMapID"], common_cl["Name"]))
 expr = pd.read_csv(expr_raw_path)
 
 expr = expr[expr["ModelID"].isin(depmap_to_name)]
+expr = expr[expr["IsDefaultEntryForModel"] == "Yes"].reset_index(drop=True)
 
 expr.insert(0, "cell_line_name", expr["ModelID"].map(depmap_to_name))
 

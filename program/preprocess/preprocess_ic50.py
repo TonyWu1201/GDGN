@@ -4,7 +4,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 common_cl_path = PROJECT_ROOT / "data" / "common_cell_lines.csv"
-common_drugs_path = PROJECT_ROOT / "data" / "common_drugs.csv"
+common_drugs_path = PROJECT_ROOT / "data" / "common_drugs_pubchem.csv"
 gdsc_raw_path = PROJECT_ROOT / "data" / "raw" / "drug_sensitivity" / "GDSC2_fitted_dose_response_27Oct23.csv"
 output_dir = PROJECT_ROOT / "data" / "processed" / "drug_sensitivity"
 output_dir.mkdir(parents=True, exist_ok=True)
@@ -15,22 +15,29 @@ gdsc_to_name = dict(zip(common_cl["GDSC_CELL_LINE_NAME"], common_cl["Name"]))
 valid_names = set(common_cl["Name"])
 
 common_drugs = pd.read_csv(common_drugs_path)
-common_drug_set = set(common_drugs["GDSC_DRUG_NAME"])
+gdsc_name_to_cid = dict(zip(common_drugs["GDSC_DRUG_NAME"], common_drugs["CID"]))
+valid_cids = set(common_drugs["CID"])
 
 gdsc = pd.read_csv(gdsc_raw_path, usecols=["CELL_LINE_NAME", "DRUG_NAME", "LN_IC50"])
 
 gdsc = gdsc[gdsc["CELL_LINE_NAME"].isin(gdsc_to_name)]
-gdsc = gdsc[gdsc["DRUG_NAME"].isin(common_drug_set)]
+gdsc = gdsc[gdsc["DRUG_NAME"].isin(gdsc_name_to_cid)]
 
 gdsc["cell_line_name"] = gdsc["CELL_LINE_NAME"].map(gdsc_to_name)
+gdsc["CID"] = gdsc["DRUG_NAME"].map(gdsc_name_to_cid)
+
+dup = gdsc.duplicated(subset=["cell_line_name", "CID"]).sum()
+if dup:
+    print(f"Duplicate (cell_line, CID) pairs (same compound, multiple GDSC entries): {dup}; aggregating with mean")
 
 matrix = gdsc.pivot_table(
     index="cell_line_name",
-    columns="DRUG_NAME",
+    columns="CID",
     values="LN_IC50",
-    aggfunc="first",
+    aggfunc="mean",
 )
 
+matrix.columns = [int(c) for c in matrix.columns]
 matrix.index.name = "cell_line_name"
 
 existing_names = [n for n in valid_names if n in matrix.index]

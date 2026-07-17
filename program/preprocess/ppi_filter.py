@@ -14,18 +14,18 @@ SCORE_THRESHOLD = 700
 
 MAX_HOP = 1
 
-print("Building STRING ID -> UniProt name mapping ...")
-id_to_name = {}
+print("Building STRING ID -> HGNC symbol mapping ...")
+id_to_symbol = {}
 for chunk in pd.read_csv(
     alias_raw, sep="\t", comment="#",
     names=["string_protein_id", "alias", "source"],
     chunksize=500000,
 ):
-    eu = chunk[chunk["source"] == "Ensembl_UniProt"]
-    for pid, name in zip(eu["string_protein_id"], eu["alias"]):
-        if pid not in id_to_name:
-            id_to_name[pid] = name
-print(f"Mapping built: {len(id_to_name)} unique STRING IDs mapped to UniProt names")
+    hs = chunk[chunk["source"] == "Ensembl_HGNC_symbol"]
+    for pid, alias in zip(hs["string_protein_id"], hs["alias"]):
+        if pid not in id_to_symbol:
+            id_to_symbol[pid] = alias
+print(f"Mapping built: {len(id_to_symbol)} unique STRING IDs mapped to HGNC symbols")
 
 print(f"Filtering PPI with combined_score > {SCORE_THRESHOLD} ...")
 filtered_rows = []
@@ -40,16 +40,20 @@ for chunk in pd.read_csv(ppi_raw, sep=" ", chunksize=1000000):
 ppi = pd.concat(filtered_rows, ignore_index=True)
 print(f"Total PPI rows: {total:,}, with score > {SCORE_THRESHOLD}: {len(ppi):,}")
 
-print("Mapping protein IDs to UniProt names ...")
-ppi["protein1_name"] = ppi["protein1"].map(id_to_name)
-ppi["protein2_name"] = ppi["protein2"].map(id_to_name)
+print("Mapping protein IDs to HGNC symbols ...")
+ppi["gene1"] = ppi["protein1"].map(id_to_symbol)
+ppi["gene2"] = ppi["protein2"].map(id_to_symbol)
 
 before = len(ppi)
-ppi = ppi.dropna(subset=["protein1_name", "protein2_name"])
+ppi = ppi.dropna(subset=["gene1", "gene2"])
 print(f"Mapped both proteins: {len(ppi):,} (dropped {before - len(ppi):,} unmappable)")
 
-ppi = ppi[["protein1_name", "protein2_name", "combined_score"]].copy()
-ppi.columns = ["gene1", "gene2", "combined_score"]
+self_loop_mask = ppi["gene1"] == ppi["gene2"]
+if self_loop_mask.any():
+    print(f"Dropping {self_loop_mask.sum()} self-loops")
+    ppi = ppi[~self_loop_mask]
+
+ppi = ppi[["gene1", "gene2", "combined_score"]].copy()
 
 csv_path = output_dir / "ppi_filtered.csv"
 ppi.to_csv(csv_path, index=False)
@@ -63,43 +67,10 @@ print(f"PPI list saved to {list_path}, length: {len(ppi_list)}")
 
 print("\n=== Filtering PPI by drug-gene associations (MAX_HOP = %d) ===" % MAX_HOP)
 
-print("Building UniProt -> HGNC symbol mapping from STRING aliases ...")
-up_to_pid = {}
-pid_to_symbol = {}
-for chunk in pd.read_csv(
-    alias_raw, sep="\t", comment="#",
-    names=["pid", "alias", "source"],
-    chunksize=500000,
-):
-    eu = chunk[chunk["source"] == "Ensembl_UniProt"]
-    for pid, alias in zip(eu["pid"], eu["alias"]):
-        if alias not in up_to_pid:
-            up_to_pid[alias] = pid
-    hs = chunk[chunk["source"] == "Ensembl_HGNC_symbol"]
-    for pid, alias in zip(hs["pid"], hs["alias"]):
-        if pid not in pid_to_symbol:
-            pid_to_symbol[pid] = alias
-
-up_to_symbol = {}
-for up_acc, string_pid in up_to_pid.items():
-    sym = pid_to_symbol.get(string_pid)
-    if sym:
-        up_to_symbol[up_acc] = sym
-print(f"UniProt -> HGNC mapping: {len(up_to_symbol)} proteins")
-
 print("Loading drug-gene interactions ...")
 dg = pd.read_csv(dg_filtered)
 dg_genes = set(dg["gene_name"].dropna())
 print(f"Drug-target genes: {len(dg_genes)}")
-
-symbol_to_up = {}
-for up_acc, symbol in up_to_symbol.items():
-    symbol_to_up.setdefault(symbol, set()).add(up_acc)
-
-seed_ups = set()
-for gene in dg_genes:
-    seed_ups.update(symbol_to_up.get(gene, set()))
-print(f"Drug-target UniProt accessions: {len(seed_ups)}")
 
 ppi_edges = ppi[["gene1", "gene2"]].values.tolist()
 adj = {}
@@ -108,8 +79,11 @@ for u, v in ppi_edges:
     adj.setdefault(v, set()).add(u)
 print(f"PPI graph: {len(adj)} nodes, {len(ppi_edges)} edges")
 
-all_nodes = set(seed_ups)
-frontier = set(seed_ups)
+seed_genes = dg_genes & set(adj)
+print(f"Seed genes (DG genes in PPI): {len(seed_genes)}")
+
+all_nodes = set(seed_genes)
+frontier = set(seed_genes)
 for hop in range(MAX_HOP):
     next_nodes = set()
     for node in frontier:
@@ -119,7 +93,7 @@ for hop in range(MAX_HOP):
     print(f"  Hop {hop + 1}: added {len(frontier):,} nodes, total {len(all_nodes):,}")
 
 ppi_dg = ppi[ppi["gene1"].isin(all_nodes) & ppi["gene2"].isin(all_nodes)]
-in_dg_count = (ppi_dg["gene1"].isin(seed_ups) & ppi_dg["gene2"].isin(seed_ups)).sum()
+in_dg_count = (ppi_dg["gene1"].isin(seed_genes) & ppi_dg["gene2"].isin(seed_genes)).sum()
 print(f"PPI edges within DG-anchored subgraph: {len(ppi_dg):,} "
       f"(both sides DG: {in_dg_count:,})")
 
