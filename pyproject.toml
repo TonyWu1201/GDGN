@@ -15,6 +15,7 @@ dependencies = [
     "rdkit>=2026.3.3",
     "scanpy>=1.12.2",
     "torch==2.12",
+    "torch-geometric>=2.8.0.post1",
     "torch-scatter>=2.1.2",
     "torch-sparse>=0.6.18",
     "torchvision",
