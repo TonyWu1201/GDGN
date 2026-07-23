@@ -5,9 +5,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-EXPR_PATH = PROJECT_ROOT / "data" / "processed" / "cell_line_omics" / "expression_.csv"
-PATHWAY_JSON_PATH = PROJECT_ROOT / "data" / "processed" / "pathway_gene_sets.json"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+EXPR_PATH = PROJECT_ROOT / "data" / "processed" / "cell_line_omics" / "expression.csv"
+PATHWAY_JSON_PATH = PROJECT_ROOT / "data" / "processed" / "driver&pathway" / "pathway_gene_sets.json"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / "driver&pathway"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ACTIVITY_OUTPUT = OUTPUT_DIR / "pathway_activity.npy"

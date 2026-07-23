@@ -4,8 +4,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 CMC_PATH = PROJECT_ROOT / "data" / "raw" / "cancer_driver_mutations" / "cmc_export.tsv"
-EXPR_PATH = PROJECT_ROOT / "data" / "processed" / "cell_line_omics" / "expression_.csv"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+EXPR_PATH = PROJECT_ROOT / "data" / "processed" / "cell_line_omics" / "expression.csv"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / "driver&pathway"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_CSV = OUTPUT_DIR / "driver_genes.csv"

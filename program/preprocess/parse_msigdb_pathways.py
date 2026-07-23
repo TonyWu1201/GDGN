@@ -4,8 +4,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 GMT_PATH = PROJECT_ROOT / "data" / "raw" / "pathway" / "msigdb_v2026.1.Hs_files_to_download_locally" / "msigdb_v2026.1.Hs_GMTs" / "c2.cp.kegg_legacy.v2026.1.Hs.symbols.gmt"
-EXPR_PATH = PROJECT_ROOT / "data" / "processed" / "cell_line_omics" / "expression_.csv"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "processed"
+EXPR_PATH = PROJECT_ROOT / "data" / "processed" / "cell_line_omics" / "expression.csv"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / "driver&pathway"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 OUTPUT_PATH = OUTPUT_DIR / "pathway_gene_sets.json"
