@@ -36,6 +36,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from program.model.dataset import load_hetero_graph, load_cell_line_features, inject_batch_omics
 from program.model.edge_mask import EdgeMaskSampler, HELDOUT_PT, PRETRAIN_DIR
+from program.model.graph_utils import split_full_edges
 from program.model.pretrain_dataloader import PretrainCellSampler, get_n_cells
 from program.model.pretrain_encoder import PretrainGNNEncoder
 from program.model.edge_predictor import PPIEdgePredictor, DTIConditionedPredictor
@@ -128,15 +129,8 @@ def evaluate_on_heldout(
     dti_pos = heldout["dti_pos"].to(device)
     dti_neg = heldout["dti_neg"].to(device)
 
-    # 在评估时不再 mask 可见边 (用全 PPI/全 DTI 作 GNN 消息传递)
-    ppi_full_fwd = hetero["gene", "ppi", "gene"].edge_index
-    kh = ppi_full_fwd[0] <= ppi_full_fwd[1]
-    ppi_eval_fwd = ppi_full_fwd[:, kh]
-    ppi_eval_rev = ppi_full_fwd[:, ~kh]
-    if ppi_eval_rev.shape[1] == 0:
-        ppi_eval_rev = torch.stack([ppi_eval_fwd[1], ppi_eval_fwd[0]], dim=0)
-    dti_full_fwd = hetero["drug", "targets", "gene"].edge_index
-    dti_eval_rev = torch.stack([dti_full_fwd[1], dti_full_fwd[0]], dim=0)
+    # 在评估时不再 mask 可见边 (用全 PPI/全 DTI 作 GNN 消息传递); 拆分用公共 helper
+    ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev = split_full_edges(hetero)
 
     gene_static = hetero["gene"].x
     drug_x = hetero["drug"].x
