@@ -56,7 +56,8 @@ def _default_full_cfg() -> dict:
         mask_ppi_ratio=0.20, mask_dti_ratio=0.40, neg_ratio=1.0,
         heldout_ppi_ratio=0.01, heldout_dti_ratio=0.20,
         batch_condition=4, max_epochs=20, patience=10, lr_patience=5, lr_factor=0.5,
-        clip_grad=5.0, seed=42, eval_cell_batch_size=8,
+        clip_grad=5.0, seed=42, eval_cell_batch_size=8, metrics_combine="hits_aware",
+        dti_margin_alpha=0.5, dti_margin_gamma=2.0,
     )
 
 
@@ -68,6 +69,8 @@ def _default_smoke_cfg() -> dict:
         heldout_ppi_ratio=0.01, heldout_dti_ratio=0.20,
         batch_condition=2, max_epochs=1, patience=10, lr_patience=5, lr_factor=0.5,
         clip_grad=5.0, seed=42, eval_cell_batch_size=2, max_steps_per_epoch=2,
+        metrics_combine="mean",
+        dti_margin_alpha=0.5, dti_margin_gamma=2.0,
     )
 
 
@@ -169,10 +172,17 @@ def evaluate_on_heldout(
     except ValueError:
         out["ap_dti"] = float("nan")
 
-    metrics_combine = getattr(cfg, "metrics_combine", "weighted")
+    metrics_combine = getattr(cfg, "metrics_combine", "hits_aware")
     if metrics_combine == "weighted":
         weight = cfg.lambda_dti / (1.0 + cfg.lambda_dti)
         out["auc"] = (1.0 - weight) * out["auc_ppi"] + weight * out["auc_dti"]
+    elif metrics_combine == "mean":
+        out["auc"] = 0.5 * out["auc_ppi"] + 0.5 * out["auc_dti"]
+    elif metrics_combine == "hits_aware":
+        hits10 = _dti_hits_at_k(d_emb, g_emb, dti_pos[0], dti_pos[1], dti_pred,
+                                omics_mean, dti_pos, device, k=10)
+        out["hits10"] = hits10
+        out["auc"] = 0.3 * out["auc_ppi"] + 0.3 * out["auc_dti"] + 0.4 * hits10
     else:
         out["auc"] = out["auc_ppi"]
     return out
@@ -180,29 +190,38 @@ def evaluate_on_heldout(
 
 def _dti_hits_at_k(d_emb_all: torch.Tensor, g_emb_all: torch.Tensor,
                    drug_idx_held: torch.Tensor, gene_idx_held: torch.Tensor,
-                   dti_pred: DTIConditionedPredictor, omics_mean: torch.Tensor,
+                   dti_pred: DTIConditionedPredictor, omics_per_gene: torch.Tensor,
                    heldout_dti_pos: torch.Tensor, device: torch.device, k: int = 10) -> float:
-    """Per-drug Hits@K on held-out DTI edges.
+    """Per-drug Hits@K on held-out DTI edges (vectorized).
 
-    For each unique drug in held-out pos, rank candidate gene scores and see where the true gene falls.
+    For each unique drug in held-out pos, rank candidate gene scores and see if true gene falls in top-K.
+    Batches all (D_unique * N_gene) edges through dti_pred in one forward for speed.
     """
     unique_drugs = heldout_dti_pos[0].unique()
     if unique_drugs.numel() == 0:
         return float("nan")
+    n_genes = g_emb_all.shape[0]
+    D = unique_drugs.numel()
+    drug_part = unique_drugs.repeat_interleave(n_genes)
+    gene_part = torch.arange(n_genes, device=device).repeat(D)
+    all_edges = torch.stack([drug_part, gene_part], dim=0)
+    with torch.no_grad():
+        logits = dti_pred(g_emb_all, d_emb_all, omics_per_gene, all_edges,
+                          torch.zeros((2, 0), dtype=torch.long, device=device))
+    logits = logits.view(D, n_genes)
+    topk_idx = logits.topk(k, dim=1).indices
+    drug_to_row = {int(d): i for i, d in enumerate(unique_drugs.tolist())}
+    drug_pos = heldout_dti_pos[0]
+    gene_pos = heldout_dti_pos[1]
     hits = 0
     n_eval = 0
     for d in unique_drugs.tolist():
-        mask = (heldout_dti_pos[0] == d)
-        true_genes = heldout_dti_pos[1][mask]
-        with torch.no_grad():
-            cand_gene = torch.arange(g_emb_all.shape[0], device=device)
-            drug_idx_t = torch.full((g_emb_all.shape[0],), d, device=device, dtype=torch.long)
-            edges = torch.stack([drug_idx_t, cand_gene], dim=0)
-            logits = dti_pred(g_emb_all, d_emb_all, omics_mean, edges, torch.zeros((2, 0), dtype=torch.long, device=device))
-        ranks = torch.argsort(logits, descending=True)
-        topk_set = ranks[:k]
-        for tg in true_genes.tolist():
-            if tg in topk_set.tolist():
+        mask = (drug_pos == d)
+        true_genes = gene_pos[mask].tolist()
+        row = drug_to_row[d]
+        top_set = set(topk_idx[row].tolist())
+        for tg in true_genes:
+            if tg in top_set:
                 hits += 1
             n_eval += 1
     return hits / max(1, n_eval)
@@ -312,7 +331,9 @@ def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -
                 loss_ci, stats = pretrain_loss(ppi_logits, y_ppi, dti_logits, y_dti,
                                                 lambda_dti=cfg.lambda_dti,
                                                 pos_weight_ppi=cfg.pos_weight_ppi,
-                                                pos_weight_dti=cfg.pos_weight_dti)
+                                                pos_weight_dti=cfg.pos_weight_dti,
+                                                dti_margin_alpha=getattr(cfg, "dti_margin_alpha", 0.0),
+                                                dti_margin_gamma=getattr(cfg, "dti_margin_gamma", 2.0))
                 (loss_ci / B).backward()
             if cfg.clip_grad and cfg.clip_grad > 0:
                 torch.nn.utils.clip_grad_norm_(encoder.parameters(), cfg.clip_grad)

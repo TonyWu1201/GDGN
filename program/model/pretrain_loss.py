@@ -25,8 +25,10 @@ def pretrain_loss(
     lambda_dti: float = 10.0,
     pos_weight_ppi: float | torch.Tensor = 1.0,
     pos_weight_dti: float | torch.Tensor = 1.0,
+    dti_margin_alpha: float = 0.0,
+    dti_margin_gamma: float = 2.0,
 ) -> tuple[torch.Tensor, dict]:
-    """Compute multi-task BCE loss.
+    """Compute multi-task BCE loss + optional DTI pairwise margin (BPR-style).
 
     Parameters
     ----------
@@ -39,21 +41,38 @@ def pretrain_loss(
     pos_weight_ppi, pos_weight_dti : float | Tensor
         passed to F.binary_cross_entropy_with_logits; PyTorch 2.x requires Tensor.
         float is auto-wrapped to scalar tensor.
+    dti_margin_alpha : float
+        weight on DTI pairwise margin (hinge) loss; 0 disables.
+    dti_margin_gamma : float
+        target margin between pos and neg scores (only used when alpha>0).
 
     Returns
     -------
     total_loss : scalar tensor (backward-able)
-    stats : dict with floats {loss_total, loss_ppi, loss_dti}
+    stats : dict with floats {loss_total, loss_ppi, loss_dti, loss_dti_margin}
     """
     pw_ppi = _to_pos_weight(pos_weight_ppi, pred_ppi)
     pw_dti = _to_pos_weight(pos_weight_dti, pred_dti)
     loss_ppi = F.binary_cross_entropy_with_logits(pred_ppi, label_ppi, pos_weight=pw_ppi)
-    loss_dti = F.binary_cross_entropy_with_logits(pred_dti, label_dti, pos_weight=pw_dti)
+    bce_dti = F.binary_cross_entropy_with_logits(pred_dti, label_dti, pos_weight=pw_dti)
+
+    margin_val = torch.zeros((), device=pred_dti.device)
+    if dti_margin_alpha > 0:
+        n_pos = int(label_dti.sum().item())
+        n_neg = pred_dti.numel() - n_pos
+        if n_pos > 0 and n_neg > 0:
+            n_pairs = min(n_pos, n_neg)
+            pos_scores = pred_dti[:n_pos][:n_pairs]
+            neg_scores = pred_dti[n_pos:][:n_pairs]
+            margin_val = F.relu(dti_margin_gamma - (pos_scores - neg_scores)).mean()
+
+    loss_dti = bce_dti + dti_margin_alpha * margin_val
     total = loss_ppi + lambda_dti * loss_dti
     stats = {
         "loss_total": float(total.detach().item()),
         "loss_ppi": float(loss_ppi.detach().item()),
         "loss_dti": float(loss_dti.detach().item()),
+        "loss_dti_margin": float(margin_val.detach().item()),
     }
     return total, stats
 
