@@ -19,7 +19,14 @@ Phase 3 GeneEncoder 也需要同一种"满图拆分"用于 buffer 缓存 (计划
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import torch
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 
 def split_full_edges(hetero) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:

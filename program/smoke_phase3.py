@@ -110,8 +110,9 @@ def main():
         and torch.isfinite(pathway_emb).all(), "forward produced NaN/Inf"
 
     # ===== 5. 链式 backward (sanity grad check) =====
-    print("[smoke] chained backward (loss = gene.sum + drug.sum + pathway.sum) ...")
-    loss = gene_emb.sum() + drug_emb.sum() + pathway_emb.sum()
+    # 含 main_drug_emb: 让 drug-side 参数 (proj_drug + drug BN) 收到梯度 (与 Phase 2 §3.3 smoke 一致)
+    print("[smoke] chained backward (loss = gene.sum + main_drug.sum*0.1 + drug.sum + pathway.sum) ...")
+    loss = gene_emb.sum() + main_drug_emb.sum() * 0.1 + drug_emb.sum() + pathway_emb.sum()
     loss.backward()
 
     def _count_grads(m, name):

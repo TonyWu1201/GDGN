@@ -172,10 +172,14 @@ def _smoke_test() -> None:
     print(f"[smoke] GeneEncoder(hetero, pretrain_ckpt={ckpt_path}, device={device}, freeze=False)")
     gene_enc = GeneEncoder(hetero, pretrain_ckpt=ckpt_path, device=device, freeze=False).to(device)
     n_params = sum(p.numel() for p in gene_enc.parameters())
-    n_buffers = len(list(gene_enc.buffers()))
-    print(f"[smoke] params={n_params:,} buffers={n_buffers} "
-          f"(expect 4 buffers: ppi_fwd/rev, dti_fwd/rev)")
-    assert n_buffers == 4, f"expect 4 buffers, got {n_buffers}"
+    # 4 个 edge_index buffer (+ N 个内层 PretrainGNNEncoder 的 BN1d running_* buffers = ~12)
+    expected_edge_bufs = {"ppi_fwd", "ppi_rev", "dti_fwd", "dti_rev"}
+    own_buf_names = {name for name, _ in gene_enc.named_buffers()
+                     if name in expected_edge_bufs}
+    n_total_buffers = len(list(gene_enc.buffers()))
+    print(f"[smoke] params={n_params:,} total buffers={n_total_buffers} "
+          f"(含 4 edge_index buffer + PretrainGNNEncoder 内层 BN1d running_* )")
+    assert own_buf_names == expected_edge_bufs, f"edge buffers: got {own_buf_names}, expect {expected_edge_bufs}"
     # 与 Phase 2 verify_pretrain 报告对照: encoder params 应 ~1.13M
     print(f"[smoke] ppi_fwd={tuple(gene_enc.ppi_fwd.shape)} ppi_rev={tuple(gene_enc.ppi_rev.shape)} "
           f"dti_fwd={tuple(gene_enc.dti_fwd.shape)} dti_rev={tuple(gene_enc.dti_rev.shape)}")
