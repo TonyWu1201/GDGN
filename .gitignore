@@ -16,3 +16,4 @@ guidance/*
 !guidance/.gitkeep
 
 tar_archive.ps1
+GDGN.tar.gz

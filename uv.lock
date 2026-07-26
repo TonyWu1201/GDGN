@@ -1287,7 +1287,7 @@ requires-dist = [
     { name = "rdkit", specifier = ">=2026.3.3" },
     { name = "scanpy", specifier = ">=1.12.2" },
     { name = "torch", specifier = "==2.12", index = "https://download.pytorch.org/whl/cu126" },
-    { name = "torch-geometric", specifier = ">=2.8.0.post1" },
+    { name = "torch-geometric", specifier = ">=2.8.0" },
     { name = "torch-scatter", index = "https://data.pyg.org/whl/torch-2.12.0+cu126.html" },
     { name = "torch-sparse", index = "https://data.pyg.org/whl/torch-2.12.0+cu126.html" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu126" },

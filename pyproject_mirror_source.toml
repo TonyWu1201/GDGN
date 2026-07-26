@@ -47,8 +47,13 @@ environments = [
 ]
 
 [[tool.uv.index]]
+name = "njupypi"
+url = "https://mirror.nju.edu.cn/pypi/web/simple/"
+default = true
+
+[[tool.uv.index]]
 name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
+url = "https://mirror.nju.edu.cn/pytorch/whl/cu126/"
 explicit = true
 
 [[tool.uv.index]]
