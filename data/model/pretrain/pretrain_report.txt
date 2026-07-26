@@ -1,0 +1,22 @@
+====== Phase 2 预训练验证报告 ======
+node gene.x=(8412, 1280) drug.x=(184, 1030)
+target_encoder: pretrained
+ckpt: data\model\pretrain\best_encoder.pt
+smoke: True
+
+== 边重构指标 (held-out) ==
+  PPI:  AUC=0.9736  AP=0.9737
+  DTI:  AUC=0.8752  AP=0.9179
+== 嵌入统计 ==
+  shape: [8412, 256]
+  mean: -0.0074373818933963776
+  std: 0.9992950558662415
+  min: -25.599624633789062
+  max: 23.297164916992188
+  effective_rank: 0.0055409884080290794
+
+== 验收标准 (计划 §7.8) ==
+  [OK] PPI AUC > 0.85 (actual 0.9736)
+  [OK] PPI AP  > 0.85 (actual 0.9737)
+  [OK] DTI AUC > 0.75 (actual 0.8752)
+  [OK] 嵌入 std 不为 0 / 不爆炸 (std=0.9993)

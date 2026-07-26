@@ -1,0 +1,587 @@
+gene_name,onc_tsg,in_expression_matrix
+ABI1,"TSG, fusion",True
+ABL1,"oncogene, fusion",True
+ABL2,"oncogene, fusion",True
+ACKR3,"oncogene, fusion",True
+ACSL3,fusion,True
+ACVR1,oncogene,True
+ACVR1B,TSG,True
+ACVR2A,TSG,True
+AFDN,"oncogene, fusion",True
+AFF1,fusion,True
+AFF3,"oncogene, fusion",True
+AFF4,"oncogene, fusion",True
+AKT1,oncogene,True
+AKT2,oncogene,True
+ALK,"oncogene, fusion",True
+AMER1,TSG,True
+APC,TSG,True
+AR,oncogene,True
+ARHGAP26,"TSG, fusion",True
+ARHGAP35,TSG,True
+ARHGEF12,"TSG, fusion",True
+ARID1A,"TSG, fusion",True
+ARID1B,TSG,True
+ARID2,TSG,True
+ARNT,"oncogene, TSG, fusion",True
+ASPSCR1,fusion,True
+ASXL1,TSG,True
+ATF1,"oncogene, fusion",True
+ATIC,fusion,True
+ATM,TSG,True
+ATP1A1,"oncogene, TSG",True
+ATP2B3,TSG,True
+ATR,TSG,True
+ATRX,TSG,True
+AXIN1,TSG,True
+AXIN2,TSG,True
+B2M,TSG,True
+BAP1,TSG,True
+BARD1,TSG,True
+BAX,TSG,True
+BCL10,"TSG, fusion",True
+BCL11A,"oncogene, fusion",True
+BCL11B,"oncogene, TSG, fusion",True
+BCL2,"oncogene, fusion",True
+BCL3,"oncogene, fusion",True
+BCL6,"oncogene, fusion",True
+BCL7A,fusion,True
+BCL9,"oncogene, fusion",True
+BCL9L,"oncogene, TSG",True
+BCOR,"TSG, fusion",True
+BCORL1,"oncogene, TSG",True
+BCR,fusion,True
+BIRC3,"oncogene, TSG, fusion",True
+BLM,TSG,True
+BMPR1A,"oncogene, TSG",True
+BRAF,"oncogene, fusion",True
+BRCA1,TSG,True
+BRCA2,TSG,True
+BRD3,"oncogene, fusion",True
+BRD4,"oncogene, fusion",True
+BRIP1,TSG,True
+BTG1,"TSG, fusion",True
+BTK,"oncogene, TSG",True
+BUB1B,TSG,True
+CACNA1D,oncogene,True
+CALR,oncogene,True
+CAMTA1,"TSG, fusion",True
+CANT1,fusion,True
+CARD11,oncogene,True
+CARS,"TSG, fusion",False
+CASP8,TSG,True
+CBFA2T3,"TSG, fusion",True
+CBFB,"TSG, fusion",True
+CBL,"oncogene, TSG, fusion",True
+CBLB,TSG,True
+CCDC6,"TSG, fusion",True
+CCNB1IP1,"TSG, fusion",True
+CCND1,"oncogene, fusion",True
+CCND2,"oncogene, fusion",True
+CCND3,"oncogene, fusion",True
+CCNE1,oncogene,True
+CD274,"TSG, fusion",True
+CD74,"oncogene, fusion",True
+CD79A,oncogene,True
+CD79B,oncogene,True
+CDC73,TSG,True
+CDH1,TSG,True
+CDH11,"TSG, fusion",True
+CDK12,TSG,True
+CDK4,oncogene,True
+CDK6,"oncogene, fusion",True
+CDKN1B,TSG,True
+CDKN2A,TSG,True
+CDKN2C,TSG,True
+CDX2,"TSG, fusion",True
+CEBPA,TSG,True
+CHCHD7,fusion,True
+CHD4,oncogene,True
+CHEK2,TSG,True
+CIC,"oncogene, TSG, fusion",True
+CIITA,"TSG, fusion",True
+CLIP1,fusion,True
+CLTC,"TSG, fusion",True
+CLTCL1,"TSG, fusion",True
+CNBP,"TSG, fusion",True
+CNOT3,TSG,True
+CNTRL,fusion,True
+COL1A1,fusion,True
+COL2A1,fusion,True
+CREB1,"oncogene, fusion",True
+CREB3L1,"TSG, fusion",True
+CREB3L2,"oncogene, fusion",True
+CREBBP,"oncogene, TSG, fusion",True
+CRLF2,"oncogene, fusion",True
+CRTC1,"oncogene, fusion",True
+CRTC3,fusion,True
+CSF3R,oncogene,True
+CTCF,TSG,True
+CTNNB1,"oncogene, fusion",True
+CUX1,"oncogene, TSG",True
+CXCR4,oncogene,True
+CYLD,TSG,True
+DAXX,"oncogene, TSG",True
+DCTN1,fusion,True
+DDB2,"oncogene, TSG",True
+DDIT3,"oncogene, fusion",True
+DDR2,oncogene,True
+DDX10,"TSG, fusion",True
+DDX3X,TSG,True
+DDX5,"oncogene, fusion",True
+DDX6,"oncogene, fusion",True
+DEK,"oncogene, fusion",True
+DICER1,TSG,True
+DNAJB1,fusion,True
+DNM2,TSG,True
+DNMT3A,TSG,True
+DROSHA,TSG,True
+EBF1,"TSG, fusion",True
+EGFR,oncogene,True
+EIF3E,"TSG, fusion",True
+EIF4A2,fusion,True
+ELF4,"oncogene, TSG, fusion",True
+ELK4,"oncogene, fusion",True
+ELL,"TSG, fusion",True
+EML4,fusion,True
+EP300,"TSG, fusion",True
+EPAS1,"oncogene, TSG",True
+EPS15,"TSG, fusion",True
+ERBB2,"oncogene, fusion",True
+ERBB3,oncogene,True
+ERBB4,"oncogene, TSG",True
+ERC1,fusion,True
+ERCC2,TSG,True
+ERCC3,TSG,True
+ERCC4,TSG,True
+ERCC5,TSG,True
+ERG,"oncogene, fusion",True
+ESR1,"oncogene, TSG, fusion",True
+ETNK1,TSG,True
+ETV1,"oncogene, fusion",True
+ETV4,"oncogene, fusion",True
+ETV5,"oncogene, fusion",True
+ETV6,"TSG, fusion",True
+EWSR1,"oncogene, fusion",True
+EXT1,"TSG, fusion",True
+EXT2,TSG,True
+EZH2,"oncogene, TSG",True
+EZR,fusion,True
+FANCA,TSG,True
+FANCC,TSG,True
+FANCD2,TSG,True
+FANCE,TSG,True
+FANCF,TSG,True
+FANCG,TSG,True
+FANCI,TSG,True
+FANCM,TSG,True
+FAS,TSG,True
+FAT1,TSG,True
+FAT4,TSG,True
+FBXO11,TSG,True
+FBXW7,TSG,True
+FCGR2B,"oncogene, fusion",True
+FCRL4,"oncogene, fusion",True
+FES,"oncogene, TSG",True
+FEV,"oncogene, fusion",True
+FGFR1,"oncogene, fusion",True
+FGFR1OP,fusion,False
+FGFR2,"oncogene, fusion",True
+FGFR3,"oncogene, fusion",True
+FGFR4,oncogene,True
+FH,TSG,True
+FHIT,"TSG, fusion",True
+FIP1L1,fusion,True
+FLCN,TSG,True
+FLI1,"oncogene, fusion",True
+FLT3,oncogene,True
+FLT4,oncogene,True
+FOXA1,oncogene,True
+FOXL2,"oncogene, TSG",True
+FOXO1,"oncogene, TSG, fusion",True
+FOXO3,"oncogene, TSG, fusion",True
+FOXO4,"oncogene, TSG, fusion",True
+FOXP1,"oncogene, fusion",True
+FSTL3,"oncogene, fusion",True
+FUBP1,oncogene,True
+FUS,"TSG, fusion",True
+GAS7,fusion,True
+GATA1,"oncogene, TSG",True
+GATA2,oncogene,True
+GATA3,"oncogene, TSG",True
+GNA11,oncogene,True
+GNA13,TSG,True
+GNAQ,oncogene,True
+GNAS,oncogene,True
+GOLGA5,fusion,True
+GOPC,fusion,True
+GPC3,"oncogene, TSG",True
+GPHN,fusion,True
+GRIN2A,TSG,True
+H3F3A,oncogene,False
+H3F3B,oncogene,False
+HERPUD1,fusion,True
+HEY1,"oncogene, fusion",True
+HGF,"oncogene, fusion",True
+HIF1A,oncogene,True
+HIP1,"oncogene, fusion",True
+HIST1H3B,oncogene,False
+HIST1H4I,fusion,False
+HLA-A,fusion,True
+HLF,"oncogene, fusion",True
+HMGA1,"oncogene, fusion",True
+HMGA2,"oncogene, fusion",True
+HNF1A,TSG,True
+HNRNPA2B1,"oncogene, fusion",True
+HOOK3,fusion,True
+HOXA11,"oncogene, TSG, fusion",True
+HOXA13,"oncogene, fusion",True
+HOXA9,"oncogene, TSG, fusion",True
+HOXC11,"oncogene, fusion",True
+HOXC13,"oncogene, fusion",True
+HOXD11,"oncogene, fusion",True
+HOXD13,"oncogene, fusion",True
+HRAS,oncogene,True
+HSP90AA1,fusion,True
+HSP90AB1,fusion,True
+IDH1,oncogene,True
+IDH2,oncogene,True
+IKBKB,oncogene,True
+IKZF1,"TSG, fusion",True
+IKZF3,"oncogene, TSG, fusion",True
+IL2,fusion,True
+IL21R,fusion,True
+IL6ST,oncogene,True
+IL7R,oncogene,True
+IRF4,"oncogene, TSG, fusion",True
+IRS4,"oncogene, TSG",True
+ITK,fusion,True
+JAK1,"oncogene, TSG",True
+JAK2,"oncogene, fusion",True
+JAK3,oncogene,True
+JUN,oncogene,True
+KAT6A,"oncogene, fusion",True
+KAT6B,"TSG, fusion",True
+KCNJ5,oncogene,True
+KDM5A,"oncogene, fusion",True
+KDM5C,TSG,True
+KDM6A,"oncogene, TSG",True
+KDR,oncogene,True
+KDSR,fusion,True
+KEAP1,TSG,True
+KIF5B,fusion,True
+KIT,oncogene,True
+KLF4,"oncogene, TSG",True
+KLF6,TSG,True
+KLK2,fusion,True
+KMT2A,"oncogene, fusion",True
+KMT2C,TSG,True
+KMT2D,"oncogene, TSG",True
+KNL1,"TSG, fusion",True
+KRAS,oncogene,True
+KTN1,fusion,True
+LASP1,fusion,True
+LATS1,TSG,True
+LATS2,TSG,True
+LCK,"oncogene, fusion",True
+LEF1,"oncogene, TSG",True
+LIFR,fusion,True
+LMNA,fusion,True
+LMO1,"oncogene, fusion",True
+LMO2,"oncogene, fusion",True
+LPP,"oncogene, fusion",True
+LRIG3,"TSG, fusion",True
+LRP1B,TSG,True
+LYL1,"oncogene, fusion",True
+LZTR1,TSG,True
+MAF,"oncogene, fusion",True
+MAFB,"oncogene, fusion",True
+MALT1,"oncogene, fusion",True
+MAML2,"oncogene, fusion",True
+MAP2K1,oncogene,True
+MAP2K2,oncogene,True
+MAP2K4,"oncogene, TSG",True
+MAP3K1,"oncogene, TSG",True
+MAP3K13,"oncogene, TSG",True
+MAPK1,oncogene,True
+MAX,TSG,True
+MDM2,oncogene,True
+MDM4,oncogene,True
+MECOM,"oncogene, fusion",True
+MED12,TSG,True
+MEN1,TSG,True
+MET,oncogene,True
+MITF,"oncogene, fusion",True
+MLF1,"TSG, fusion",True
+MLH1,TSG,True
+MLLT1,fusion,True
+MLLT10,"oncogene, fusion",True
+MLLT11,fusion,True
+MLLT3,fusion,True
+MLLT6,fusion,True
+MN1,"oncogene, fusion",True
+MPL,oncogene,True
+MRTFA,"oncogene, TSG, fusion",True
+MSH2,TSG,True
+MSH6,TSG,True
+MSI2,"oncogene, fusion",True
+MSN,fusion,True
+MTCP1,"oncogene, fusion",True
+MTOR,oncogene,True
+MUC1,fusion,True
+MUTYH,TSG,True
+MYB,"oncogene, fusion",True
+MYC,"oncogene, fusion",True
+MYCL,oncogene,True
+MYCN,oncogene,True
+MYD88,oncogene,True
+MYH11,fusion,True
+MYH9,"TSG, fusion",True
+MYO5A,fusion,True
+MYOD1,oncogene,True
+NAB2,"TSG, fusion",True
+NBN,TSG,True
+NCOA1,fusion,True
+NCOA2,"oncogene, fusion",True
+NCOA4,"TSG, fusion",True
+NCOR1,TSG,True
+NCOR2,TSG,True
+NDRG1,"TSG, fusion",True
+NF1,"TSG, fusion",True
+NF2,TSG,True
+NFATC2,"oncogene, fusion",True
+NFE2L2,"oncogene, TSG",True
+NFIB,fusion,True
+NFKB2,"oncogene, TSG, fusion",True
+NFKBIE,TSG,True
+NIN,fusion,True
+NKX2-1,"oncogene, TSG",True
+NONO,fusion,True
+NOTCH1,"oncogene, TSG, fusion",True
+NOTCH2,"oncogene, TSG",True
+NPM1,"oncogene, fusion",True
+NR4A3,"oncogene, fusion",True
+NRAS,oncogene,True
+NRG1,fusion,True
+NSD1,fusion,True
+NSD2,"oncogene, fusion",True
+NSD3,"oncogene, fusion",True
+NT5C2,oncogene,True
+NTRK1,"oncogene, TSG, fusion",True
+NTRK2,"oncogene, fusion",True
+NTRK3,"oncogene, fusion",True
+NUMA1,fusion,True
+NUP214,fusion,True
+NUP98,"oncogene, fusion",True
+NUTM1,"oncogene, fusion",True
+NUTM2B,fusion,True
+NUTM2D,fusion,True
+OLIG2,"oncogene, fusion",True
+P2RY8,"oncogene, fusion",True
+PAFAH1B2,fusion,True
+PALB2,TSG,True
+PATZ1,"TSG, fusion",True
+PAX3,"oncogene, fusion",True
+PAX5,"oncogene, TSG, fusion",True
+PAX7,fusion,True
+PAX8,fusion,True
+PBRM1,TSG,True
+PBX1,"oncogene, fusion",True
+PCM1,fusion,True
+PDCD1LG2,"oncogene, fusion",True
+PDE4DIP,fusion,True
+PDGFB,"oncogene, fusion",True
+PDGFRA,"oncogene, fusion",True
+PDGFRB,"oncogene, fusion",True
+PER1,"TSG, fusion",True
+PHF6,TSG,True
+PHOX2B,TSG,True
+PICALM,fusion,True
+PIK3CA,oncogene,True
+PIK3CB,oncogene,True
+PIK3R1,TSG,True
+PIM1,"oncogene, fusion",True
+PLAG1,"oncogene, fusion",True
+PLCG1,"oncogene, fusion",True
+PML,"TSG, fusion",True
+PMS2,TSG,True
+POLD1,TSG,True
+POLE,TSG,True
+POLQ,"oncogene, TSG",True
+POT1,TSG,True
+POU2AF1,"oncogene, fusion",True
+POU5F1,"oncogene, fusion",True
+PPARG,"TSG, fusion",True
+PPFIBP1,fusion,True
+PPM1D,oncogene,True
+PPP2R1A,TSG,True
+PPP6C,TSG,True
+PRCC,fusion,True
+PRDM1,TSG,True
+PRDM16,"oncogene, fusion",True
+PREX2,oncogene,True
+PRF1,TSG,True
+PRKACA,oncogene,True
+PRKAR1A,"oncogene, TSG, fusion",True
+PRKCI,oncogene,True
+PRRX1,fusion,True
+PSIP1,"oncogene, fusion",True
+PTCH1,TSG,True
+PTEN,TSG,True
+PTK6,"oncogene, TSG",True
+PTPN11,oncogene,True
+PTPN13,TSG,True
+PTPRB,TSG,True
+PTPRC,TSG,True
+PTPRK,"TSG, fusion",True
+PTPRT,TSG,True
+QKI,"oncogene, TSG",True
+RABEP1,fusion,True
+RAC1,oncogene,True
+RAD21,"oncogene, TSG",True
+RAD50,TSG,True
+RAD51B,"TSG, fusion",True
+RAD51C,TSG,True
+RAD51D,TSG,True
+RAF1,"oncogene, fusion",True
+RANBP2,"TSG, fusion",True
+RAP1GDS1,"oncogene, fusion",True
+RARA,"oncogene, fusion",True
+RASA1,TSG,True
+RB1,TSG,True
+RBM10,TSG,True
+RBM15,fusion,True
+RECQL4,"oncogene, TSG",True
+REL,oncogene,True
+RELA,"fusion, oncogene",True
+RET,"oncogene, fusion",True
+RHOA,"oncogene, TSG",True
+RHOH,"TSG, fusion",True
+RICTOR,oncogene,True
+RMI2,"TSG, fusion",True
+RNF213,fusion,True
+RNF43,TSG,True
+ROS1,"oncogene, fusion",True
+RPL10,TSG,True
+RPL22,"TSG, fusion",True
+RPL5,TSG,True
+RPN1,fusion,True
+RRAS2,oncogene,True
+RSPO2,"TSG, fusion",True
+RSPO3,"oncogene, fusion",True
+RUNX1,"oncogene, TSG, fusion",True
+RUNX1T1,"oncogene, TSG, fusion",True
+RXRA,TSG,True
+SALL4,oncogene,True
+SBDS,TSG,True
+SDC4,fusion,True
+SDHA,TSG,True
+SDHAF2,TSG,True
+SDHB,TSG,True
+SDHC,TSG,True
+SDHD,TSG,True
+SET,fusion,True
+SETBP1,"oncogene, fusion",True
+SETD2,TSG,True
+SF3B1,oncogene,True
+SFPQ,"TSG, fusion",True
+SFRP4,TSG,True
+SH2B3,TSG,True
+SH3GL1,"oncogene, fusion",True
+SIX1,oncogene,True
+SLC34A2,"TSG, fusion",True
+SLC45A3,fusion,True
+SMAD2,TSG,True
+SMAD3,TSG,True
+SMAD4,TSG,True
+SMARCA4,TSG,True
+SMARCB1,TSG,True
+SMARCE1,TSG,True
+SMO,oncogene,True
+SND1,"oncogene, fusion",True
+SOCS1,TSG,True
+SOS1,"oncogene, fusion",True
+SOX2,oncogene,True
+SPEN,TSG,True
+SPOP,TSG,True
+SRC,oncogene,True
+SRSF2,oncogene,True
+SRSF3,"oncogene, fusion",True
+SS18,fusion,True
+SS18L1,fusion,True
+SSX1,"oncogene, fusion",True
+SSX2,"oncogene, fusion",True
+SSX4,"oncogene, fusion",True
+STAG2,TSG,True
+STAT3,oncogene,True
+STAT5B,"oncogene, TSG, fusion",True
+STAT6,"oncogene, fusion",True
+STIL,"oncogene, fusion",True
+STK11,TSG,True
+STRN,fusion,True
+SUFU,TSG,True
+SUZ12,"oncogene, TSG, fusion",True
+SYK,"oncogene, fusion",True
+TAF15,"oncogene, fusion",True
+TAL1,"oncogene, fusion",True
+TAL2,"oncogene, fusion",True
+TBL1XR1,"oncogene, TSG, fusion",True
+TBX3,"oncogene, TSG",True
+TCEA1,fusion,True
+TCF12,fusion,True
+TCF3,"oncogene, TSG, fusion",True
+TCF7L2,"oncogene, fusion",True
+TCL1A,"oncogene, fusion",True
+TENT5C,TSG,True
+TERT,"oncogene, TSG",True
+TET1,"oncogene, TSG, fusion",True
+TET2,TSG,True
+TFE3,"oncogene, fusion",True
+TFEB,"oncogene, fusion",True
+TFG,fusion,True
+TGFBR2,TSG,True
+TLX1,"oncogene, fusion",True
+TLX3,"oncogene, fusion",True
+TMEM127,TSG,True
+TMPRSS2,fusion,True
+TNFAIP3,TSG,True
+TNFRSF14,TSG,True
+TNFRSF17,"oncogene, fusion",True
+TOP1,fusion,True
+TP53,"oncogene, TSG, fusion",True
+TP63,"oncogene, TSG",True
+TPM3,"TSG, fusion",True
+TPM4,fusion,True
+TPR,fusion,True
+TRAF7,TSG,True
+TRIM24,"oncogene, TSG, fusion",True
+TRIM27,"oncogene, fusion",True
+TRIM33,"TSG, fusion",True
+TRIP11,fusion,True
+TRRAP,oncogene,True
+TSC1,TSG,True
+TSC2,TSG,True
+U2AF1,oncogene,True
+UBR5,oncogene,True
+UBTF,"oncogene, fusion",True
+USP6,"oncogene, fusion",True
+USP8,oncogene,True
+VHL,TSG,True
+WAS,oncogene,True
+WDCP,fusion,True
+WIF1,"TSG, fusion",True
+WRN,TSG,True
+WT1,"oncogene, TSG, fusion",True
+WWTR1,"oncogene, fusion",True
+XPA,TSG,True
+XPC,TSG,True
+XPO1,oncogene,True
+YAP1,"fusion, oncogene",True
+YWHAE,"TSG, fusion",True
+ZBTB16,"TSG, fusion",True
+ZFHX3,TSG,True
+ZMYM2,fusion,True
+ZNF331,"TSG, fusion",True
+ZNF384,fusion,True
+ZNF521,"oncogene, fusion",True
+ZRSR2,TSG,True

@@ -1,0 +1,14 @@
+{
+  "model": "baseline_simple",
+  "output_dir": "data/model/baseline",
+  "batch_size": 1024,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 1e-05,
+  "lr_head": 0.001,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "seed": 42
+}
