@@ -1,28 +1,28 @@
 ================================================================================
 Phase 4 Final Evaluation Report | model=baseline_simple
 ckpt: data\model\baseline\best_model.pt
-best epoch: 49
+best epoch: 48
 ================================================================================
 [Table 1] 主指标: train/val/test PCC / Spearman / RMSE / MAE / MSE
 split          PCC  Spearman      RMSE       MAE       MSE       N
-train       0.9569    0.9331    0.8560    0.6562    0.7327   52224
-val         0.9345    0.9034    1.0382    0.7806    1.0778    6655
-test        0.9317    0.9009    1.0648    0.7956    1.1339    6655
+train       0.9622    0.9411    0.8075    0.6223    0.6521   53184
+val         0.9387    0.9099    1.0071    0.7562    1.0143    6655
+test        0.9378    0.9101    1.0191    0.7549    1.0385    6655
 
 [Table 2] 7 个无 DTI 药物子集 PCC (Phase 3 §10.4 tracking)
 split          PCC      RMSE       N  no_dti_n
-train       0.9309    0.9460    1740      1740
-val         0.8903    1.2420     220       220
-test        0.8866    1.2445     220       220
+train       0.9381    0.8939    1780      1780
+val         0.8984    1.1953     220       220
+test        0.8920    1.2158     220       220
 
 [Table 3] 95% CI bootstrap (n=1000) for test PCC / RMSE
-PCC  95% CI: [0.9272, 0.9362]  (n_boot=1000)
-RMSE 95% CI: [1.0350, 1.0942]
+PCC  95% CI: [0.9336, 0.9418]  (n_boot=1000)
+RMSE 95% CI: [0.9901, 1.0480]
 
 [Table 4] 训练曲线摘要
-best epoch: 49  val_pcc=0.9345
+best epoch: 48  val_pcc=0.9387
 total epochs logged: 50
-total train time: 1508.6s
+total train time: 1935.1s
 final lr_encoder=1.00e-05 lr_head=1.00e-03
 
 [Note] 数据泄漏口径:
