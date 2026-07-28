@@ -1,0 +1,1 @@
+uv run torchrun --nproc_per_node=2 program/model/train_gdgn.py --model gdgn --config data/model/gdgn/gdgn_config.json --batch_size 32

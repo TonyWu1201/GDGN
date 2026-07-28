@@ -19,6 +19,8 @@ Phase 4 Step 3: 主任务训练循环 train_gdgn.py
 - 11 个无 DTI 药物 idx 解析: interactions_filtered.csv + drug_cid_to_idx.json
   缓存到 data/model/gdgn/no_dti_drug_idx.json
 - final_eval_report.txt 生成函数 (训练完后用户手动调用 --post_eval 跑, 主流程不触发)
+- **多卡训练 (DDP)**: 通过 `torchrun --nproc_per_node=N` 启动自动启用 DistributedDataParallel.
+  config["batch_size"] 解释为 total batch, 内部按 world_size 切成 per-gpu batch.
 
 Phase 4 评估项落实
 ------------------
@@ -28,15 +30,30 @@ Phase 4 评估项落实
   泛化真口径留 Phase 6.
 - S2 (self._device): GDGNModel / BaselineSimpleModel 已在 Phase 4 Step 2/4 处理.
 
+DDP 注意事项
+------------
+- find_unused_parameters=True: GDGN `use_main_drug_emb=False` 时主图 drug 分支有
+  6 个无梯度参数 (M2 已知行为), DDP 默认会检测到未参与 backward 而 raise; 此处
+  通过 find_unused_parameters=True 让 DDP 容忍死分支.
+- 评估用 all_gather_object 跨 rank 拼接 preds/trues/cell_idx/drug_idx, 每个 rank
+  得到完整集合后 compute_metrics 一致, 这样 scheduler step / 早停计数器跨 rank 同步.
+- ckpt / log 仅在 rank 0 写盘, 避免竞态.
+- 假设 batch_size % world_size == 0; 否则 raise.
+
 不修改 Phase 1-3 任何代码 / 数据.
 
 Usage
 -----
-smoke (限 5 batch):
+smoke (限 5 batch, 单卡):
     uv run python program/model/train_gdgn.py --model gdgn --smoke
-全量训练 (服务器):
+全量训练 (单卡):
     uv run python program/model/train_gdgn.py --model gdgn --config data/model/gdgn/gdgn_config.json
-最终评估 (训练后):
+全量训练 (N 卡 DDP, 推荐):
+    torchrun --nproc_per_node=N program/model/train_gdgn.py --model gdgn \\
+        --config data/model/gdgn/gdgn_config.json
+    # 注: batch_size 解释为 total batch, 自动按 N 切分 per-gpu batch.
+    # 例: batch_size=32 + nproc=2 -> per-gpu=16 (与原 gdgn_config 一致).
+最终评估 (训练后, 单卡跑即可, **不要用 torchrun**):
     uv run python program/model/train_gdgn.py --model gdgn --post_eval \\
         --ckpt data/model/gdgn/best_model.pt --output_dir data/model/gdgn
 """
@@ -44,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -53,6 +71,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from scipy.stats import pearsonr, spearmanr
+from torch.nn.parallel import DistributedDataParallel
 from tqdm import tqdm
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -68,6 +87,30 @@ BASELINE_DIR = _PROJECT_ROOT / "data" / "model" / "baseline"
 INTERACTIONS_CSV = _PROJECT_ROOT / "data" / "processed" / "drug_gene_interaction" / "interactions_filtered.csv"
 DRUG_CID_TO_IDX_JSON = _PROJECT_ROOT / "data" / "processed" / "drug_cid_to_idx.json"
 NO_DTI_IDX_JSON = GDGN_DIR / "no_dti_drug_idx.json"
+
+
+def _init_distributed() -> tuple[int, int, int, bool]:
+    """探测 DDP 环境变量 (torchrun / mp.spawn / 手动 env 注入).
+
+    返回 (rank, world_size, local_rank, is_dist).
+    is_dist=True 时调用 torch.distributed.init_process_group (NCCL on CUDA, gloo on CPU).
+    重复调用安全: 已 init 则跳过.
+    """
+    if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
+        return 0, 1, 0, False
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    is_dist = world_size > 1
+    if is_dist and not torch.distributed.is_initialized():
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        torch.distributed.init_process_group(backend=backend, init_method="env://")
+    return rank, world_size, local_rank, is_dist
+
+
+def _cleanup_distributed(is_dist: bool) -> None:
+    if is_dist and torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()
 
 
 def build_model(model_name: str, hetero, config: dict, device) -> torch.nn.Module:
@@ -156,8 +199,15 @@ def bootstrap_ci(preds: np.ndarray, trues: np.ndarray, n_boot: int = 1000, seed:
     }
 
 
-def collect_preds_trues(model, loader, clf, device, max_batches: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """跑一遍 loader, 收集 preds/trues + 对应 cell_idx/drug_idx (供 11 无 DTI 子集统计).
+def collect_preds_trues(model, loader, clf, device,
+                        max_batches: int | None = None,
+                        is_dist: bool = False, world_size: int = 1, rank: int = 0
+                        ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """跑一遍 loader, 收集 preds/trues + 对应 cell_idx/drug_idx (供 7 无 DTI 子集统计).
+
+    DDP: is_dist=True 时用 all_gather_object 跨 rank 拼接, 每个 rank 拿到完整集合
+    (这样 scheduler.step / 早停计数器跨 rank 一致). 调用方需保证 loader 的
+    DistributedSampler drop_last=True (见 dataset.get_dataloaders distributed 分支).
 
     返回 (preds (N,), trues (N,), cell_idx (N,), drug_idx (N,))
     """
@@ -176,18 +226,53 @@ def collect_preds_trues(model, loader, clf, device, max_batches: int | None = No
             true_list.append(y.detach().cpu())
             cell_list.append(cell_idx.detach().cpu())
             drug_list.append(drug_idx.detach().cpu())
-    return (torch.cat(pred_list).numpy(), torch.cat(true_list).numpy(),
-            torch.cat(cell_list).numpy(), torch.cat(drug_list).numpy())
+
+    def _cat(tensors, dtype=None):
+        if not tensors:
+            return torch.zeros(0, dtype=dtype) if dtype else torch.zeros(0)
+        return torch.cat(tensors)
+
+    preds_local = _cat(pred_list)
+    trues_local = _cat(true_list)
+    cell_local = _cat(cell_list, dtype=torch.long) if cell_list else torch.zeros(0, dtype=torch.long)
+    drug_local = _cat(drug_list, dtype=torch.long) if drug_list else torch.zeros(0, dtype=torch.long)
+
+    if is_dist and world_size > 1:
+        gathered = [None] * world_size
+        torch.distributed.all_gather_object(
+            gathered, (preds_local, trues_local, cell_local, drug_local),
+        )
+        preds_all = torch.cat([g[0] for g in gathered])
+        trues_all = torch.cat([g[1] for g in gathered])
+        cell_all = torch.cat([g[2] for g in gathered])
+        drug_all = torch.cat([g[3] for g in gathered])
+        return (preds_all.numpy(), trues_all.numpy(),
+                cell_all.numpy(), drug_all.numpy())
+
+    return (preds_local.numpy(), trues_local.numpy(),
+            cell_local.numpy(), drug_local.numpy())
 
 
-def evaluate(model, loader, clf, device, max_batches: int | None = None) -> dict:
+def evaluate(model, loader, clf, device,
+             max_batches: int | None = None,
+             is_dist: bool = False, world_size: int = 1, rank: int = 0) -> dict:
     """跑一遍 loader, 计算 5 项指标. max_batches 限批 (smoke 用)."""
-    preds, trues, _, _ = collect_preds_trues(model, loader, clf, device, max_batches=max_batches)
+    preds, trues, _, _ = collect_preds_trues(
+        model, loader, clf, device, max_batches=max_batches,
+        is_dist=is_dist, world_size=world_size, rank=rank,
+    )
     return compute_metrics(preds, trues)
 
 
 def train_gdgn(config: dict, smoke: bool = False) -> dict:
     """Phase 4 主任务训练循环 (共用 gdgn / baseline_simple).
+
+    DDP 多卡: 用 `torchrun --nproc_per_node=N program/model/train_gdgn.py ...` 启动,
+    本函数自动检测 env vars (RANK/WORLD_SIZE/LOCAL_RANK) 装配 DistributedDataParallel.
+    config["batch_size"] 解释为 **total batch**, 内部按 world_size 切分为 per-gpu
+    batch (要求 `batch_size % world_size == 0`, 否则 raise).
+    仅 rank 0 写 ckpt / log / cfg; 各 rank 的 val/early-stop 通过 all_gather 同步,
+    保证 scheduler / 早停计数器跨 rank 一致; break 同步在所有 rank 触发.
 
     config keys (必填): model, pretrain_ckpt (gdgn only), output_dir
     config keys (可选填默认): lr_encoder, lr_head, batch_size, max_epochs,
@@ -196,154 +281,255 @@ def train_gdgn(config: dict, smoke: bool = False) -> dict:
     """
     torch.manual_seed(config.get("seed", 42))
     np.random.seed(config.get("seed", 42))
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[train] device={device} smoke={smoke} model={config['model']}")
 
-    if config["model"] == "gdgn" and smoke and config.get("pretrain_ckpt"):
-        ckpt_path = Path(config["pretrain_ckpt"])
-        if ckpt_path.exists():
-            info = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            kw = info.get("encoder_kwargs", {})
-            if int(kw.get("hidden_dim", 0)) != 256 or int(info.get("epoch", -1)) < 10:
-                print(f"[train] SMOKE NOTE: {ckpt_path} is smoke ckpt (hidden={kw.get('hidden_dim')}, "
-                      f"epoch={info.get('epoch')}); fallback to pretrain_ckpt=None (random init). "
-                      f"全量训练须先重跑 Phase 2 hidden=256 ckpt.")
+    # ---- DDP 设备初始化 -----------------------------------------------------
+    # smoke 始终单进程, 不进入 DDP (避免小 B 触发 DDP 容性问题 / BatchNorm B=1 隐患)
+    is_dist = False
+    rank, world_size, local_rank = 0, 1, 0
+    if not smoke:
+        rank, world_size, local_rank, is_dist = _init_distributed()
+    if is_dist:
+        if not torch.cuda.is_available():
+            raise RuntimeError("DDP 训练需要 CUDA 多卡; CPU 路径请用单进程.")
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    is_main = (rank == 0)
+    print(f"[train] rank={rank}/{world_size} local_rank={local_rank} device={device} "
+          f"smoke={smoke} model={config['model']} is_dist={is_dist}")
+
+    try:
+        # ---- per-gpu batch 切分 -----------------------------------------------
+        total_batch = int(config["batch_size"])
+        if is_dist:
+            if total_batch % world_size != 0:
+                raise ValueError(
+                    f"batch_size {total_batch} 必须可被 world_size {world_size} 整除; "
+                    f"请调整 config['batch_size'] 或 nproc_per_node.")
+            per_gpu_batch = total_batch // world_size
+        else:
+            per_gpu_batch = total_batch
+        if is_main:
+            print(f"[train] total_batch={total_batch} per_gpu_batch={per_gpu_batch} "
+                  f"world_size={world_size}")
+
+        if config["model"] == "gdgn" and smoke and config.get("pretrain_ckpt"):
+            ckpt_path = Path(config["pretrain_ckpt"])
+            if ckpt_path.exists():
+                info = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+                kw = info.get("encoder_kwargs", {})
+                if int(kw.get("hidden_dim", 0)) != 256 or int(info.get("epoch", -1)) < 10:
+                    print(f"[train] SMOKE NOTE: {ckpt_path} is smoke ckpt (hidden={kw.get('hidden_dim')}, "
+                          f"epoch={info.get('epoch')}); fallback to pretrain_ckpt=None (random init). "
+                          f"全量训练须先重跑 Phase 2 hidden=256 ckpt.")
+                    config["pretrain_ckpt"] = None
+            else:
+                print(f"[train] SMOKE NOTE: {ckpt_path} not found; fallback to pretrain_ckpt=None.")
                 config["pretrain_ckpt"] = None
+
+        hetero = load_hetero_graph(device)
+        clf = load_cell_line_features(device)
+
+        model = build_model(config["model"], hetero, config, device)
+        n_enc = sum(p.numel() for p in model.encoder_parameters())
+        n_head = sum(p.numel() for p in model.head_parameters())
+        if is_main:
+            print(f"[train] encoder_params={n_enc:,} head_params={n_head:,}")
+
+        # ---- DDP 包裹 ---------------------------------------------------------
+        # find_unused_parameters=True: GDGN use_main_drug_emb=False 时主图 drug 分支
+        # 6 个参数无梯度 (M2 已知); DDP 默认会 raise "Expected to have finished reduction".
+        if is_dist:
+            find_unused = (config["model"] == "gdgn"
+                           and not config.get("use_main_drug_emb", False))
+            model = DistributedDataParallel(
+                model, device_ids=[local_rank],
+                find_unused_parameters=find_unused,
+            )
+            raw_model = model.module
         else:
-            print(f"[train] SMOKE NOTE: {ckpt_path} not found; fallback to pretrain_ckpt=None.")
-            config["pretrain_ckpt"] = None
+            raw_model = model
 
-    hetero = load_hetero_graph(device)
-    clf = load_cell_line_features(device)
+        # optimizer param_groups 用 raw_model 引用 (DDP wrap 后参数张量引用不变)
+        encoder_params = raw_model.encoder_parameters()
+        head_params = raw_model.head_parameters()
+        optimizer = torch.optim.Adam(
+            [
+                {"params": encoder_params, "lr": config["lr_encoder"]},
+                {"params": head_params, "lr": config["lr_head"]},
+            ],
+            weight_decay=config.get("weight_decay", 0.0),
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="max",
+            patience=config.get("lr_patience", 5),
+            factor=config.get("lr_factor", 0.5),
+        )
 
-    model = build_model(config["model"], hetero, config, device)
-    n_enc = sum(p.numel() for p in model.encoder_parameters())
-    n_head = sum(p.numel() for p in model.head_parameters())
-    print(f"[train] encoder_params={n_enc:,} head_params={n_head:,}")
+        loaders = get_dataloaders(
+            batch_size=per_gpu_batch,
+            num_workers=0,
+            pin_memory=torch.cuda.is_available(),
+            load_hetero=False,
+            distributed=is_dist,
+            rank=rank,
+            world_size=world_size,
+            seed=config.get("seed", 42),
+        )
 
-    optimizer = torch.optim.Adam(
-        [
-            {"params": model.encoder_parameters(), "lr": config["lr_encoder"]},
-            {"params": model.head_parameters(), "lr": config["lr_head"]},
-        ],
-        weight_decay=config.get("weight_decay", 0.0),
-    )
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="max",
-        patience=config.get("lr_patience", 5),
-        factor=config.get("lr_factor", 0.5),
-    )
+        output_dir = Path(config["output_dir"])
+        if is_main:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        # 多卡 mkdir 竞态保护
+        if is_dist:
+            torch.distributed.barrier()
+        best_path = output_dir / "best_model.pt"
+        last_path = output_dir / "last_model.pt"
+        log_path = output_dir / "train_log.json"
+        cfg_dump = output_dir / "trained_config.json"
 
-    loaders = get_dataloaders(
-        batch_size=config["batch_size"], num_workers=0,
-        pin_memory=torch.cuda.is_available(), load_hetero=False,
-    )
+        max_epochs = config.get("max_epochs", 50)
+        patience_left = config.get("early_stopping_patience", 10)
+        grad_clip = config.get("grad_clip", 1.0)
+        aux_weight = config.get("aux_loss_weight", 0.0)
+        if aux_weight > 0:
+            # TODO Phase 6 ablation: 启用需重 import EdgeMaskSampler + pretrain_loss + 重新负采样
+            # 当前仅留接口位, 主流程 raise 避免静默错误
+            raise NotImplementedError(
+                "aux_loss_weight > 0 暂未实现 (Phase 4 计划 §0.2.1 方案 C 仅留接口); "
+                "Phase 6 ablation 启用需 import EdgeMaskSampler + pretrain_loss 一并重做主图边预测.")
 
-    output_dir = Path(config["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
-    best_path = output_dir / "best_model.pt"
-    last_path = output_dir / "last_model.pt"
-    log_path = output_dir / "train_log.json"
-    cfg_dump = output_dir / "trained_config.json"
+        max_steps = config.get("max_steps_per_epoch") if smoke else None
+        if smoke and max_steps is None:
+            max_steps = 5
 
-    max_epochs = config.get("max_epochs", 50)
-    patience_left = config.get("early_stopping_patience", 10)
-    grad_clip = config.get("grad_clip", 1.0)
-    aux_weight = config.get("aux_loss_weight", 0.0)
-    if aux_weight > 0:
-        # TODO Phase 6 ablation: 启用需重 import EdgeMaskSampler + pretrain_loss + 重新负采样
-        # 当前仅留接口位, 主流程 raise 避免静默错误
-        raise NotImplementedError(
-            "aux_loss_weight > 0 暂未实现 (Phase 4 计划 §0.2.1 方案 C 仅留接口); "
-            "Phase 6 ablation 启用需 import EdgeMaskSampler + pretrain_loss 一并重做主图边预测.")
+        best_val_pcc = -np.inf
+        log_records = []
+        train_t0 = time.time()
 
-    max_steps = config.get("max_steps_per_epoch") if smoke else None
-    if smoke and max_steps is None:
-        max_steps = 5
+        for epoch in range(max_epochs):
+            model.train()
+            # DistributedSampler 必须 set_epoch 保证每 epoch 不同 shuffle 顺序
+            if is_dist:
+                loaders["train"].sampler.set_epoch(epoch)
+                loaders["val"].sampler.set_epoch(epoch)
+                loaders["test"].sampler.set_epoch(epoch)
+            epoch_t0 = time.time()
+            train_preds, train_trues = [], []
+            epoch_losses = []
+            step_iter = tqdm(loaders["train"], desc=f"epoch {epoch} train",
+                             disable=(smoke or not is_main))
+            for step, batch in enumerate(step_iter):
+                if max_steps is not None and step >= max_steps:
+                    break
+                cell_idx = batch["cell_idx"].to(device)
+                drug_idx = batch["drug_idx"].to(device)
+                y = batch["y"].to(device)
+                omics = inject_batch_omics(clf, cell_idx)
+                ic50_pred, _ = model(cell_idx, drug_idx, omics)
+                loss = F.mse_loss(ic50_pred.squeeze(-1), y)
 
-    best_val_pcc = -np.inf
-    log_records = []
-    train_t0 = time.time()
+                optimizer.zero_grad()
+                loss.backward()  # DDP 在 backward 时自动 all-reduce 梯度
+                if grad_clip and grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
 
-    for epoch in range(max_epochs):
-        model.train()
-        epoch_t0 = time.time()
-        train_preds, train_trues = [], []
-        epoch_losses = []
-        step_iter = tqdm(loaders["train"], desc=f"epoch {epoch} train", disable=smoke)
-        for step, batch in enumerate(step_iter):
-            if max_steps is not None and step >= max_steps:
-                break
-            cell_idx = batch["cell_idx"].to(device)
-            drug_idx = batch["drug_idx"].to(device)
-            y = batch["y"].to(device)
-            omics = inject_batch_omics(clf, cell_idx)
-            ic50_pred, _ = model(cell_idx, drug_idx, omics)
-            loss = F.mse_loss(ic50_pred.squeeze(-1), y)
+                train_preds.append(ic50_pred.detach().cpu().squeeze(-1))
+                train_trues.append(y.detach().cpu())
+                epoch_losses.append(float(loss.item()))
+                if smoke and is_main:
+                    print(f"  [epoch {epoch}] step {step+1}/{max_steps} loss={loss.item():.4f}")
 
-            optimizer.zero_grad()
-            loss.backward()
-            if grad_clip and grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
+            # train 统计: DDP 下 all_gather 跨 rank 拼接得到全局 train_metrics
+            if is_dist:
+                tp_t = torch.cat(train_preds) if train_preds else torch.zeros(0)
+                tt_t = torch.cat(train_trues) if train_trues else torch.zeros(0)
+                gathered_train = [None] * world_size
+                torch.distributed.all_gather_object(
+                    gathered_train, (tp_t, tt_t)
+                )
+                train_preds_full = torch.cat([g[0] for g in gathered_train]).numpy()
+                train_trues_full = torch.cat([g[1] for g in gathered_train]).numpy()
+            else:
+                train_preds_full = (torch.cat(train_preds).numpy()
+                                    if train_preds else np.zeros(0))
+                train_trues_full = (torch.cat(train_trues).numpy()
+                                    if train_trues else np.zeros(0))
+            train_metrics = compute_metrics(train_preds_full, train_trues_full)
+            train_metrics["mse_running"] = float(np.mean(epoch_losses)) if epoch_losses else float("nan")
 
-            train_preds.append(ic50_pred.detach().cpu().squeeze(-1))
-            train_trues.append(y.detach().cpu())
-            epoch_losses.append(float(loss.item()))
-            if smoke:
-                print(f"  [epoch {epoch}] step {step+1}/{max_steps} loss={loss.item():.4f}")
+            val_metrics = evaluate(model, loaders["val"], clf, device,
+                                max_batches=(max_steps if smoke else None),
+                                is_dist=is_dist, world_size=world_size, rank=rank)
 
-        train_metrics = compute_metrics(torch.cat(train_preds).numpy(), torch.cat(train_trues).numpy())
-        train_metrics["mse_running"] = float(np.mean(epoch_losses)) if epoch_losses else float("nan")
-
-        val_metrics = evaluate(model, loaders["val"], clf, device,
-                            max_batches=(max_steps if smoke else None))
-
-        epoch_time = time.time() - epoch_t0
-        record = {
-            "epoch": epoch,
-            "train": train_metrics,
-            "val": val_metrics,
-            "lr_encoder": optimizer.param_groups[0]["lr"],
-            "lr_head": optimizer.param_groups[1]["lr"],
-            "epoch_time": epoch_time,
-        }
-        log_records.append(record)
-        print(f"[epoch {epoch}] train_pcc={train_metrics['pcc']:.4f} mse={train_metrics['mse_running']:.4f} | "
-              f"val_pcc={val_metrics['pcc']:.4f} val_rmse={val_metrics['rmse']:.4f} | "
-              f"dt={epoch_time:.1f}s")
-
-        scheduler.step(val_metrics["pcc"])
-
-        if val_metrics["pcc"] > best_val_pcc:
-            best_val_pcc = val_metrics["pcc"]
-            patience_left = config.get("early_stopping_patience", 10)
-            torch.save({
+            epoch_time = time.time() - epoch_t0
+            record = {
                 "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "val_metrics": val_metrics,
-                "config": config,
-            }, best_path)
-            print(f"  [ckpt] new best val_pcc={best_val_pcc:.4f} -> {best_path}")
-        else:
-            patience_left -= 1
-            print(f"  [early-stop] patience left = {patience_left}")
-            if patience_left <= 0:
-                print("[early-stop] triggered; stopping")
+                "train": train_metrics,
+                "val": val_metrics,
+                "lr_encoder": optimizer.param_groups[0]["lr"],
+                "lr_head": optimizer.param_groups[1]["lr"],
+                "epoch_time": epoch_time,
+            }
+            log_records.append(record)
+            if is_main:
+                print(f"[epoch {epoch}] train_pcc={train_metrics['pcc']:.4f} "
+                      f"mse={train_metrics['mse_running']:.4f} | "
+                      f"val_pcc={val_metrics['pcc']:.4f} val_rmse={val_metrics['rmse']:.4f} | "
+                      f"dt={epoch_time:.1f}s")
+
+            scheduler.step(val_metrics["pcc"])
+
+            # 早停 / ckpt: 各 rank 独立比较但 val_pcc 来自 all_gather 一致, 计数器跨 rank
+            # 同步; 仅 rank 0 写盘避免竞态. break 在所有 rank 同 epoch 触发, 避免死锁.
+            if val_metrics["pcc"] > best_val_pcc:
+                best_val_pcc = val_metrics["pcc"]
+                patience_left = config.get("early_stopping_patience", 10)
+                if is_main:
+                    torch.save({
+                        "epoch": epoch,
+                        "model_state_dict": raw_model.state_dict(),  # 去掉 module. 前缀, post_eval 可直接 load
+                        "val_metrics": val_metrics,
+                        "config": config,
+                    }, best_path)
+                    print(f"  [ckpt] new best val_pcc={best_val_pcc:.4f} -> {best_path}")
+            else:
+                patience_left -= 1
+                if is_main:
+                    print(f"  [early-stop] patience left = {patience_left}")
+                if patience_left <= 0:
+                    if is_main:
+                        print("[early-stop] triggered; stopping")
+                    break
+
+            if is_main:
+                torch.save({
+                    "epoch": epoch,
+                    "model_state_dict": raw_model.state_dict(),
+                    "config": config,
+                }, last_path)
+                log_path.write_text(json.dumps(
+                    {"records": log_records, "config": config},
+                    ensure_ascii=False, indent=2))
+                cfg_dump.write_text(json.dumps(config, ensure_ascii=False, indent=2))
+
+            if smoke:
+                if is_main:
+                    print(f"[smoke] hit max_epochs/smoke after epoch {epoch}")
                 break
 
-        torch.save({"epoch": epoch, "model_state_dict": model.state_dict(), "config": config}, last_path)
-        log_path.write_text(json.dumps({"records": log_records, "config": config}, ensure_ascii=False, indent=2))
-        cfg_dump.write_text(json.dumps(config, ensure_ascii=False, indent=2))
-
-        if smoke:
-            print(f"[smoke] hit max_epochs/smoke after epoch {epoch}")
-            break
-
-    total_time = time.time() - train_t0
-    log_path.write_text(json.dumps({"records": log_records, "config": config, "total_time": total_time}, ensure_ascii=False, indent=2))
-    print(f"[train] DONE best_val_pcc={best_val_pcc:.4f} total_time={total_time:.1f}s log={log_path}")
-    return {"best_val_pcc": best_val_pcc, "n_epochs_run": len(log_records), "log_path": str(log_path)}
+        total_time = time.time() - train_t0
+        if is_main:
+            log_path.write_text(json.dumps(
+                {"records": log_records, "config": config, "total_time": total_time},
+                ensure_ascii=False, indent=2))
+            print(f"[train] DONE best_val_pcc={best_val_pcc:.4f} "
+                  f"total_time={total_time:.1f}s log={log_path}")
+        return {"best_val_pcc": best_val_pcc, "n_epochs_run": len(log_records), "log_path": str(log_path)}
+    finally:
+        _cleanup_distributed(is_dist)
 
 
 def write_final_report(
@@ -526,6 +712,17 @@ def main():
         config["batch_size"] = 4
 
     if args.post_eval:
+        # post_eval 是单进程任务, 不需要 DDP. 若用户误用 torchrun 启动, 仅让 rank 0
+        # 跑 (其他 rank 提前静默退出), 避免多进程同时写 final_eval_report.txt 竞态.
+        if "RANK" in os.environ:
+            _rank = int(os.environ.get("RANK", 0))
+            _ws = int(os.environ.get("WORLD_SIZE", 1))
+            if _rank != 0:
+                return
+            if _ws > 1:
+                print(f"[post_eval] NOTE: 检测到 torchrun world_size={_ws}; "
+                      f"仅 rank 0 执行 post_eval, 其他 rank 已提前退出. "
+                      f"post_eval 推荐直接用 `uv run python` 单进程跑.")
         if args.ckpt is None:
             ckpt = Path(config["output_dir"]) / "best_model.pt"
         else:
