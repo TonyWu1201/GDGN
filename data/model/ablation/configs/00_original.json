@@ -1,0 +1,22 @@
+{
+  "_comment": "A0 对照: 复制 Phase 4 原 ckpt 配置 (无需重训, 仅供配置对照). 实际产物在 data/model/gdgn/best_model.pt",
+  "model": "gdgn",
+  "pretrain_ckpt": "data/model/pretrain/best_encoder.pt",
+  "output_dir": "data/model/ablation/00_original",
+  "batch_size": 16,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 1e-5,
+  "lr_head": 1e-3,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "freeze_encoder": false,
+  "use_main_drug_emb": false,
+  "aux_loss_weight": 0.0,
+  "num_heads": 4,
+  "n_query_tokens": 1,
+  "predictor_hidden": 256,
+  "seed": 42
+}

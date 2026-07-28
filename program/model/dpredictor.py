@@ -73,22 +73,27 @@ class DrugResponsePredictor(nn.Module):
         hidden_dim: int = 256,
         dropout: float = 0.3,
         use_main_drug_emb: bool = False,
+        n_query_tokens: int = 1,
     ):
         super().__init__()
         assert proj_dim % num_heads == 0, f"proj_dim {proj_dim} must be divisible by num_heads {num_heads}"
         assert proj_dim == gene_dim, f"proj_dim {proj_dim} must equal gene_dim {gene_dim} (cross-attn K/V == gene_emb)"
+        assert n_query_tokens >= 1, f"n_query_tokens {n_query_tokens} must be >= 1"
         self.use_main_drug_emb = use_main_drug_emb
+        self.n_query_tokens = n_query_tokens
         self.gene_dim = gene_dim
         self.drug_dim = drug_dim
         self.pathway_dim = pathway_dim
 
-        self.drug_proj = nn.Linear(drug_dim, proj_dim)
+        # n_query_tokens=1 时与原行为严格一致 (Phase 4 ckpt 可直接 load)
+        # n_query_tokens>1 时 drug_proj 输出 (B, proj_dim * n_query) 后 reshape 成 (B, n_query, proj_dim)
+        self.drug_proj = nn.Linear(drug_dim, proj_dim * n_query_tokens)
 
         if use_main_drug_emb:
             self.main_drug_proj = nn.Linear(gene_dim, drug_dim)
-            fusion_dim = proj_dim + drug_dim + drug_dim + pathway_dim
+            fusion_dim = proj_dim * n_query_tokens + drug_dim + drug_dim + pathway_dim
         else:
-            fusion_dim = proj_dim + drug_dim + pathway_dim
+            fusion_dim = proj_dim * n_query_tokens + drug_dim + pathway_dim
         self.fusion_dim = fusion_dim
 
         self.cross_attn = nn.MultiheadAttention(
@@ -129,13 +134,24 @@ class DrugResponsePredictor(nn.Module):
         ic50_pred : (B, 1)             回归值, 不激活
         attn_weights : (B, 1, N_gene)  跨 4 head 平均注意力权重, Phase 5 IG 直接消费
         """
-        drug_query = self.drug_proj(drug_emb).unsqueeze(1)        # (B, 1, proj_dim)
+        drug_query = self.drug_proj(drug_emb)                       # (B, proj_dim * n_query)
+        B = drug_emb.size(0)
+        if self.n_query_tokens > 1:
+            drug_query = drug_query.view(B, self.n_query_tokens, -1)  # (B, n_q, proj_dim)
+        else:
+            drug_query = drug_query.unsqueeze(1)                # (B, 1, proj_dim) — 与原一致
         attended, attn_weights = self.cross_attn(
             drug_query, gene_emb, gene_emb,
             need_weights=True,
             average_attn_weights=True,
         )
-        attended_genes = attended.squeeze(1)                      # (B, proj_dim)
+        # attended: (B, n_query, proj_dim); attn_weights: (B, n_query, N_gene)
+        if self.n_query_tokens > 1:
+            attended_genes = attended.reshape(B, -1)            # (B, n_query * proj_dim)
+            # attn_weights 多 query 时跨 query 平均到单 token, 保持 Phase 5 IG 接口 (B, 1, N_gene)
+            attn_weights = attn_weights.mean(dim=1, keepdim=True)
+        else:
+            attended_genes = attended.squeeze(1)                # (B, proj_dim) — 与原一致
 
         parts = [attended_genes, drug_emb, pathway_emb]
         if self.use_main_drug_emb:

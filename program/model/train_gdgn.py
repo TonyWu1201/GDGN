@@ -123,6 +123,8 @@ def build_model(model_name: str, hetero, config: dict, device) -> torch.nn.Modul
             freeze_encoder=config.get("freeze_encoder", False),
             use_main_drug_emb=config.get("use_main_drug_emb", False),
             num_heads=config.get("num_heads", 4),
+            n_query_tokens=config.get("n_query_tokens", 1),
+            predictor_hidden=config.get("predictor_hidden", 256),
         ).to(device)
     elif model_name == "baseline_simple":
         return BaselineSimpleModel(hetero=hetero, device=device).to(device)
@@ -640,6 +642,7 @@ def default_config(model_name: str) -> dict:
             "weight_decay": 0.0, "grad_clip": 1.0,
             "freeze_encoder": False, "use_main_drug_emb": False,
             "aux_loss_weight": 0.0, "num_heads": 4,
+            "n_query_tokens": 1, "predictor_hidden": 256,
             "seed": 42,
         }
     elif model_name == "baseline_simple":
@@ -670,6 +673,10 @@ def main():
     ap.add_argument("--freeze_encoder", action="store_true", default=None)
     ap.add_argument("--use_main_drug_emb", action="store_true", default=None)
     ap.add_argument("--num_heads", type=int, default=None)
+    ap.add_argument("--n_query_tokens", type=int, default=None,
+                    help="cross-attn query token 数 (默认 1 与 Phase 4 一致; >1 解信息瓶颈)")
+    ap.add_argument("--predictor_hidden", type=int, default=None,
+                    help="predictor MLP 隐层维度 (默认 256)")
     ap.add_argument("--aux_loss_weight", type=float, default=None)
     ap.add_argument("--build_no_dti_cache", action="store_true",
                     help="只解析并缓存 11 无 DTI idx 到 no_dti_drug_idx.json, 不训练")
@@ -703,6 +710,10 @@ def main():
         config["use_main_drug_emb"] = args.use_main_drug_emb
     if args.num_heads is not None:
         config["num_heads"] = args.num_heads
+    if args.n_query_tokens is not None:
+        config["n_query_tokens"] = args.n_query_tokens
+    if args.predictor_hidden is not None:
+        config["predictor_hidden"] = args.predictor_hidden
     if args.aux_loss_weight is not None:
         config["aux_loss_weight"] = args.aux_loss_weight
 

@@ -1,0 +1,22 @@
+{
+  "_comment": "A6 heads8 (可选第 6 个): num_heads=8 (4→8 多头) + 其余与 A1 一致. 探查更多注意力头是否能更好捕捉 gene×drug 异质关系",
+  "model": "gdgn",
+  "pretrain_ckpt": "data/model/pretrain/best_encoder.pt",
+  "output_dir": "data/model/ablation/06_heads8",
+  "batch_size": 64,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 1e-4,
+  "lr_head": 1e-3,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "freeze_encoder": false,
+  "use_main_drug_emb": true,
+  "aux_loss_weight": 0.0,
+  "num_heads": 8,
+  "n_query_tokens": 1,
+  "predictor_hidden": 256,
+  "seed": 42
+}

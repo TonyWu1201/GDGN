@@ -1,0 +1,22 @@
+{
+  "_comment": "A2 lr_only: 单变量验证 lr_encoder=1e-4 (10× 原值) 是否独立提升. 其余与 A0 一致 (use_main_drug_emb=False)",
+  "model": "gdgn",
+  "pretrain_ckpt": "data/model/pretrain/best_encoder.pt",
+  "output_dir": "data/model/ablation/02_lr_only",
+  "batch_size": 64,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 1e-4,
+  "lr_head": 1e-3,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "freeze_encoder": false,
+  "use_main_drug_emb": false,
+  "aux_loss_weight": 0.0,
+  "num_heads": 4,
+  "n_query_tokens": 1,
+  "predictor_hidden": 256,
+  "seed": 42
+}

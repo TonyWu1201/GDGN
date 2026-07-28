@@ -1,0 +1,22 @@
+{
+  "_comment": "A1 main: 综合最优猜测 lr_encoder=1e-4 (10× 原值) + use_main_drug_emb=True (消除 M2 死分支). 单变量分析见 A2/A3",
+  "model": "gdgn",
+  "pretrain_ckpt": "data/model/pretrain/best_encoder.pt",
+  "output_dir": "data/model/ablation/01_main",
+  "batch_size": 64,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 1e-4,
+  "lr_head": 1e-3,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "freeze_encoder": false,
+  "use_main_drug_emb": true,
+  "aux_loss_weight": 0.0,
+  "num_heads": 4,
+  "n_query_tokens": 1,
+  "predictor_hidden": 256,
+  "seed": 42
+}

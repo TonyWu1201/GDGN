@@ -76,6 +76,8 @@ class GDGNModel(nn.Module):
         freeze_encoder: bool = False,
         use_main_drug_emb: bool = False,
         num_heads: int = 4,
+        n_query_tokens: int = 1,
+        predictor_hidden: int = 256,
     ):
         super().__init__()
         self._device = torch.device(device)
@@ -89,8 +91,9 @@ class GDGNModel(nn.Module):
         self.pathway_enc = PathwayEncoder(pathway_in_dim=186, pathway_dim=64).to(device)
         self.predictor = DrugResponsePredictor(
             gene_dim=256, drug_dim=128, pathway_dim=64,
-            proj_dim=256, num_heads=num_heads, hidden_dim=256, dropout=0.3,
+            proj_dim=256, num_heads=num_heads, hidden_dim=predictor_hidden, dropout=0.3,
             use_main_drug_emb=self.use_main_drug_emb,
+            n_query_tokens=n_query_tokens,
         ).to(device)
 
         self.gene_x_static = hetero["gene"].x.to(self._device)
