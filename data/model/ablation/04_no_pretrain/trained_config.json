@@ -1,0 +1,22 @@
+{
+  "_comment": "A4 no_pretrain: 随机初始化 encoder (pretrain_ckpt=null) + lr_encoder=1e-4 (从零训需大 lr). 验证图架构本身 vs Phase 2 预训练的价值",
+  "model": "gdgn",
+  "pretrain_ckpt": null,
+  "output_dir": "data/model/ablation/04_no_pretrain",
+  "batch_size": 64,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 0.0001,
+  "lr_head": 0.001,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "freeze_encoder": false,
+  "use_main_drug_emb": false,
+  "aux_loss_weight": 0.0,
+  "num_heads": 4,
+  "n_query_tokens": 1,
+  "predictor_hidden": 256,
+  "seed": 42
+}
