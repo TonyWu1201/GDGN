@@ -66,6 +66,16 @@ class GDGNModel(nn.Module):
         True 让 Predictor 融合主图 drug_emb (Phase 6 ablation "主图融合 vs 不融合").
     num_heads : int
         cross-attention 头数 (默认 4).
+    n_query_tokens : int
+        cross-attention query token 数 (Phase 6 ablation; 默认 1).
+    predictor_hidden : int
+        Predictor MLP 隐层维度 (默认 256).
+    cell_bypass_mode : str
+        Phase 4.2 cell-side bypass 模式 (默认 "none"):
+        "none" / "residual" / "cat". 详见 DrugResponsePredictor 文档字符串 +
+        [Phase4.2架构改造规划.md] §4.1.
+    learnable_alpha : bool
+        Phase 4.2 residual 模式的可学习调制强度 (默认 True).
     """
 
     def __init__(
@@ -78,11 +88,15 @@ class GDGNModel(nn.Module):
         num_heads: int = 4,
         n_query_tokens: int = 1,
         predictor_hidden: int = 256,
+        cell_bypass_mode: str = "none",
+        learnable_alpha: bool = True,
     ):
         super().__init__()
         self._device = torch.device(device)
         self.use_main_drug_emb = bool(use_main_drug_emb)
         self.freeze_encoder = bool(freeze_encoder)
+        self.cell_bypass_mode = cell_bypass_mode
+        self.learnable_alpha = learnable_alpha
 
         self.gene_enc = GeneEncoder(
             hetero, pretrain_ckpt=pretrain_ckpt, device=device, freeze=freeze_encoder,
@@ -94,6 +108,8 @@ class GDGNModel(nn.Module):
             proj_dim=256, num_heads=num_heads, hidden_dim=predictor_hidden, dropout=0.3,
             use_main_drug_emb=self.use_main_drug_emb,
             n_query_tokens=n_query_tokens,
+            cell_bypass_mode=cell_bypass_mode,
+            learnable_alpha=learnable_alpha,
         ).to(device)
 
         self.gene_x_static = hetero["gene"].x.to(self._device)
@@ -224,6 +240,30 @@ def _smoke_test() -> None:
     assert ic50_r.shape == (4, 1) and attn_r.shape == (4, 1, n_genes)
     print(f"[smoke] random-init OK: ic50 std={ic50_r.std():.4f} "
           f"(pretrained std={ic50_pred.std():.4f})")
+
+    # --- Phase 4.2 cell_bypass_mode 端到端校验 ---------------------------
+    # 详见 [Phase4.2架构改造规划.md] §4.1 §4.2 §4.5.
+    for mode in ("residual", "cat"):
+        model_bp = GDGNModel(
+            hetero=hetero, pretrain_ckpt=None, device=device, freeze_encoder=False,
+            cell_bypass_mode=mode, learnable_alpha=True,
+        ).to(device)
+        n_enc_bp = sum(p.numel() for p in model_bp.encoder_parameters())
+        n_head_bp = sum(p.numel() for p in model_bp.head_parameters())
+        model_bp.train()
+        ic50_bp, attn_bp = model_bp(cell_idx, drug_idx, omics)
+        assert ic50_bp.shape == (4, 1), f"{mode}: ic50_pred shape {ic50_bp.shape}"
+        assert attn_bp.shape == (4, 1, n_genes), f"{mode}: attn shape {attn_bp.shape}"
+        assert torch.isfinite(ic50_bp).all() and torch.isfinite(attn_bp).all()
+        loss_bp = ic50_bp.sum()
+        loss_bp.backward()
+        n_grad_head_bp = sum(
+            1 for p in model_bp.head_parameters() if p.grad is not None and p.requires_grad)
+        n_total_head_bp = sum(1 for _ in model_bp.head_parameters())
+        assert n_grad_head_bp == n_total_head_bp, \
+            f"{mode}: head only {n_grad_head_bp}/{n_total_head_bp} have grad"
+        print(f"[smoke] cell_bypass_mode={mode} OK | encoder={n_enc_bp:,} head={n_head_bp:,} "
+              f"(expect residual>B1 ~510K head, cat>B3 ~576K head)")
 
     print("[smoke] ALL OK | gdgn_model.py")
 

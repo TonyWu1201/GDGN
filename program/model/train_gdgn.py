@@ -125,6 +125,8 @@ def build_model(model_name: str, hetero, config: dict, device) -> torch.nn.Modul
             num_heads=config.get("num_heads", 4),
             n_query_tokens=config.get("n_query_tokens", 1),
             predictor_hidden=config.get("predictor_hidden", 256),
+            cell_bypass_mode=config.get("cell_bypass_mode", "none"),
+            learnable_alpha=config.get("learnable_alpha", True),
         ).to(device)
     elif model_name == "baseline_simple":
         return BaselineSimpleModel(hetero=hetero, device=device).to(device)
@@ -141,12 +143,12 @@ def resolve_no_dti_drug_idx(force_rebuild: bool = False) -> list[int]:
     缓存到 data/model/gdgn/no_dti_drug_idx.json
     """
     if NO_DTI_IDX_JSON.exists() and not force_rebuild:
-        return json.loads(NO_DTI_IDX_JSON.read_text())
+        return json.loads(NO_DTI_IDX_JSON.read_text(encoding="utf-8"))
 
     import pandas as pd
     df = pd.read_csv(INTERACTIONS_CSV)
     cid_with_dti = set(df["cid"].astype(int).unique())
-    cid_to_idx = json.loads(DRUG_CID_TO_IDX_JSON.read_text())
+    cid_to_idx = json.loads(DRUG_CID_TO_IDX_JSON.read_text(encoding="utf-8"))
     all_idx = set(cid_to_idx.values())
     idx_with_dti = {cid_to_idx[str(c)] for c in cid_with_dti if str(c) in cid_to_idx}
     no_dti_idx = sorted(all_idx - idx_with_dti)
@@ -330,14 +332,48 @@ def train_gdgn(config: dict, smoke: bool = False) -> dict:
                 print(f"[train] SMOKE NOTE: {ckpt_path} not found; fallback to pretrain_ckpt=None.")
                 config["pretrain_ckpt"] = None
 
+        # ---- Phase 4.2 诊断: per-rank 进度打印 + NCCL barrier ----------------
+        # 排查 DDP init 阶段 NCCL watchdog timeout (work_seq=1 ALLGATHER 卡 600s):
+        # 在每个 load/build 步骤前后都打印 rank-tagged + flush=True, 并在每步之后
+        # 插入 torch.distributed.barrier() 让所有 rank 在此强同步. 任何一个 rank
+        # 卡在前面 (e.g. load_hetero_graph IO), barrier 自己会在 600s 后超时并指明
+        # 哪一步卡; 4 个 rank 都过 barrier 卡在 DDP wrap, 则是 NCCL 传输层问题
+        # (NCCL_IB_DISABLE / NCCL_P2P_DISABLE / NCCL_SOCKET_IFNAME 等 env 变量).
+        print(f"[train/rank {rank}/{world_size}] step 1/4: pre load_hetero_graph", flush=True)
         hetero = load_hetero_graph(device)
-        clf = load_cell_line_features(device)
+        print(f"[train/rank {rank}/{world_size}] step 1/4: post load_hetero_graph "
+              f"(genes={int(hetero['gene'].num_nodes)} drugs={int(hetero['drug'].num_nodes)})",
+              flush=True)
+        if is_dist:
+            torch.distributed.barrier()
+            print(f"[train/rank {rank}/{world_size}] step 1/4 barrier OK (all ranks loaded hetero)",
+                  flush=True)
 
+        print(f"[train/rank {rank}/{world_size}] step 2/4: pre load_cell_line_features", flush=True)
+        clf = load_cell_line_features(device)
+        print(f"[train/rank {rank}/{world_size}] step 2/4: post load_cell_line_features", flush=True)
+        if is_dist:
+            torch.distributed.barrier()
+            print(f"[train/rank {rank}/{world_size}] step 2/4 barrier OK (all ranks loaded clf)",
+                  flush=True)
+
+        bypass_mode = config.get('cell_bypass_mode', 'none')
+        print(f"[train/rank {rank}/{world_size}] step 3/4: pre build_model "
+              f"(model={config['model']} cell_bypass_mode={bypass_mode} "
+              f"n_query_tokens={config.get('n_query_tokens', 1)} "
+              f"predictor_hidden={config.get('predictor_hidden', 256)})", flush=True)
         model = build_model(config["model"], hetero, config, device)
         n_enc = sum(p.numel() for p in model.encoder_parameters())
         n_head = sum(p.numel() for p in model.head_parameters())
+        print(f"[train/rank {rank}/{world_size}] step 3/4: post build_model "
+              f"encoder_params={n_enc:,} head_params={n_head:,}", flush=True)
         if is_main:
             print(f"[train] encoder_params={n_enc:,} head_params={n_head:,}")
+        if is_dist:
+            torch.distributed.barrier()
+            print(f"[train/rank {rank}/{world_size}] step 3/4 barrier OK "
+                  f"(all ranks finished build_model, params shapes matched)",
+                  flush=True)
 
         # ---- DDP 包裹 ---------------------------------------------------------
         # find_unused_parameters=True: GDGN use_main_drug_emb=False 时主图 drug 分支
@@ -345,11 +381,14 @@ def train_gdgn(config: dict, smoke: bool = False) -> dict:
         if is_dist:
             find_unused = (config["model"] == "gdgn"
                            and not config.get("use_main_drug_emb", False))
+            print(f"[train/rank {rank}/{world_size}] step 4/4: pre DDP wrap "
+                  f"(find_unused_parameters={find_unused})", flush=True)
             model = DistributedDataParallel(
                 model, device_ids=[local_rank],
                 find_unused_parameters=find_unused,
             )
             raw_model = model.module
+            print(f"[train/rank {rank}/{world_size}] step 4/4: DDP wrap OK", flush=True)
         else:
             raw_model = model
 
@@ -606,7 +645,7 @@ def write_final_report(
     rows.append("[Table 4] 训练曲线摘要")
     log_path = output_dir / "train_log.json"
     if log_path.exists():
-        log = json.loads(log_path.read_text())
+        log = json.loads(log_path.read_text(encoding="utf-8"))
         recs = log.get("records", [])
         if recs:
             best_rec = max(recs, key=lambda r: r["val"]["pcc"])
@@ -643,6 +682,7 @@ def default_config(model_name: str) -> dict:
             "freeze_encoder": False, "use_main_drug_emb": False,
             "aux_loss_weight": 0.0, "num_heads": 4,
             "n_query_tokens": 1, "predictor_hidden": 256,
+            "cell_bypass_mode": "none", "learnable_alpha": True,
             "seed": 42,
         }
     elif model_name == "baseline_simple":
@@ -677,6 +717,11 @@ def main():
                     help="cross-attn query token 数 (默认 1 与 Phase 4 一致; >1 解信息瓶颈)")
     ap.add_argument("--predictor_hidden", type=int, default=None,
                     help="predictor MLP 隐层维度 (默认 256)")
+    ap.add_argument("--cell_bypass_mode", choices=["none", "residual", "cat"], default=None,
+                    help="Phase 4.2 cell-side bypass 模式 (默认 none, 与 Phase 6 strict load 兼容)")
+    ap.add_argument("--learnable_alpha", choices=["true", "false"], default=None,
+                    help="Phase 4.2 residual 残差调制强度是否可学习 (默认 true; "
+                         "仅 cell_bypass_mode=residual 时生效)")
     ap.add_argument("--aux_loss_weight", type=float, default=None)
     ap.add_argument("--build_no_dti_cache", action="store_true",
                     help="只解析并缓存 11 无 DTI idx 到 no_dti_drug_idx.json, 不训练")
@@ -689,7 +734,7 @@ def main():
         return
 
     if args.config:
-        config = json.loads(Path(args.config).read_text())
+        config = json.loads(Path(args.config).read_text(encoding="utf-8"))
         config.setdefault("model", args.model)
     else:
         config = default_config(args.model)
@@ -714,6 +759,10 @@ def main():
         config["n_query_tokens"] = args.n_query_tokens
     if args.predictor_hidden is not None:
         config["predictor_hidden"] = args.predictor_hidden
+    if args.cell_bypass_mode is not None:
+        config["cell_bypass_mode"] = args.cell_bypass_mode
+    if args.learnable_alpha is not None:
+        config["learnable_alpha"] = (args.learnable_alpha == "true")
     if args.aux_loss_weight is not None:
         config["aux_loss_weight"] = args.aux_loss_weight
 

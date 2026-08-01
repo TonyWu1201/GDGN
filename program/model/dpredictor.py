@@ -6,6 +6,11 @@ Phase 4 Step 1: DrugResponsePredictor (Cross-Attention 融合 + IC50 头)
 embed_dim=256 / num_heads=4), §0.2.5 (3 层 MLP + BN1d + Dropout(0.3), 输出不激活),
 §0.4.1 (use_main_drug_emb 默认 False, Phase 6 ablation flag).
 
+Phase 4.2 架构改造 (cell-side bypass + cross-attn residual modulation):
+依据 [Phase4.2架构改造规划.md] §3 §4. 新增 `cell_bypass_mode` / `learnable_alpha`
+两参数, 默认 "none" / True 严格与 Phase 6 ckpt 兼容 (bypass_proj /
+modulation_alpha 不实例化 → strict load 通过).
+
 职责
 ----
 - 输入: gene_emb (B, N_gene, 256) + drug_emb (B, 128) + pathway_emb (B, 64),
@@ -14,6 +19,14 @@ embed_dim=256 / num_heads=4), §0.2.5 (3 层 MLP + BN1d + Dropout(0.3), 输出�
 - drug 作 query, 须经 drug_proj Linear(128, 256) 投影到 gene 维度;
   gene 作为 key/value; cross-attention average_attn_weights=True 跨 4 head 取平均,
   便于 Phase 5 单一权重直接归因.
+- Phase 4.2 cell_bypass_mode:
+  * "none": cell-side = attended_genes (与 Phase 6 严格一致, strict load OK)
+  * "residual": cell-side = bypass_proj(gene_emb.mean) + alpha * attended_genes
+                (bypass 主路径 drug-agnostic, 残差调制. 当 n_query>1 时, bypass_proj
+                 输出 dim = n_query*proj_dim 与 attended_genes 对齐做残差和.)
+  * "cat": cell-side = cat([bypass_proj(gene_emb.mean), attended_genes], -1)
+           (双通道显式并行. bypass_proj 输出 dim == gene_dim (n_query 无关),
+            cell_repr dim = gene_dim + n_query*proj_dim.)
 
 参数量 (use_main_drug_emb=False): 446,209 ≈ 446K
     drug_proj Linear(128, 256)                     33,024
@@ -24,8 +37,15 @@ embed_dim=256 / num_heads=4), §0.2.5 (3 层 MLP + BN1d + Dropout(0.3), 输出�
     predictor[5] BatchNorm1d(128)                     256
     predictor[8] Linear(128, 1)                      129
 
+Phase 4.2 参数量 (cell_bypass_mode != "none", use_main_drug_emb=False, 来自
+[Phase4.2架构改造规划.md] §4.4, B1/B2/B3 三变体):
+    B1  residual | n_q=1 | hidden=256 : head ~510K   (+bypass_proj ~65K vs A0 444K)
+    B2  residual | n_q=4 | hidden=512 : head ~1.46M  (+bypass_proj ~264K, MLP 加宽)
+    B3  cat      | n_q=1 | hidden=256 : head ~576K   (cell_repr 512 -> fusion 704)
+
 ⚠️ BatchNorm1d B=1 隐患: train 模式下 B=1 必触发 ValueError. Phase 4 trainer 必须
-drop_last=True + 评估切 eval(). 单元 smoke 用 B>=4 远离此隐患.
+drop_last=True + 评估切 eval(). 单元 smoke 用 B>=4 远离此隐患. Phase 4.2
+bypass_proj BN1d 同样适用.
 """
 from __future__ import annotations
 
@@ -61,6 +81,22 @@ class DrugResponsePredictor(nn.Module):
         MLP dropout (默认 0.3).
     use_main_drug_emb : bool
         是否融合主图 drug_emb (默认 False; True 时追加 main_drug_proj Linear(256, 128))
+    n_query_tokens : int
+        cross-attention query token 数 (Phase 6 ablation; 默认 1).
+    cell_bypass_mode : str
+        Phase 4.2 cell-side bypass 路径模式 (默认 "none"):
+        * "none":     cell-side = attended_genes (与 Phase 6 严格一致, strict load OK)
+        * "residual": cell-side = bypass_proj(gene_emb.mean) + alpha * attended_genes
+        * "cat":      cell-side = cat([bypass_proj(gene_emb.mean), attended_genes], -1)
+    learnable_alpha : bool
+        Phase 4.2 residual 模式的可学习调制强度 (默认 True); False 时 alpha=1.0 固定.
+        仅 cell_bypass_mode="residual" 时生效; "none"/"cat" 不实例化此参数.
+
+    Phase 4.2 兼容性:
+    - cell_bypass_mode="none" (默认) 不实例化 bypass_proj/modulation_alpha →
+      state_dict 键集与 Phase 6 完全一致, strict load_state_dict 通过.
+    - cell_bypass_mode != "none" 时新增 bypass_proj (+ modulation_alpha for
+      residual+learnable) → 必须 strict=False 加载或全新 init (B1/B2/B3 走全新 init).
     """
 
     def __init__(
@@ -74,26 +110,59 @@ class DrugResponsePredictor(nn.Module):
         dropout: float = 0.3,
         use_main_drug_emb: bool = False,
         n_query_tokens: int = 1,
+        cell_bypass_mode: str = "none",
+        learnable_alpha: bool = True,
     ):
         super().__init__()
         assert proj_dim % num_heads == 0, f"proj_dim {proj_dim} must be divisible by num_heads {num_heads}"
         assert proj_dim == gene_dim, f"proj_dim {proj_dim} must equal gene_dim {gene_dim} (cross-attn K/V == gene_emb)"
         assert n_query_tokens >= 1, f"n_query_tokens {n_query_tokens} must be >= 1"
+        assert cell_bypass_mode in ("none", "residual", "cat"), \
+            f"cell_bypass_mode {cell_bypass_mode!r} must be one of 'none'/'residual'/'cat'"
         self.use_main_drug_emb = use_main_drug_emb
         self.n_query_tokens = n_query_tokens
         self.gene_dim = gene_dim
         self.drug_dim = drug_dim
         self.pathway_dim = pathway_dim
+        self.cell_bypass_mode = cell_bypass_mode
+        self.learnable_alpha = learnable_alpha
 
         # n_query_tokens=1 时与原行为严格一致 (Phase 4 ckpt 可直接 load)
         # n_query_tokens>1 时 drug_proj 输出 (B, proj_dim * n_query) 后 reshape 成 (B, n_query, proj_dim)
         self.drug_proj = nn.Linear(drug_dim, proj_dim * n_query_tokens)
 
+        # Phase 4.2 cell-side bypass 路径 (cell_bypass_mode != "none" 时实例化)
+        # bypass_proj 输出 dim 取决于 mode:
+        #   "residual": 必须与 attended_genes 维度 (n_query_tokens * proj_dim) 对齐做残差和
+        #               (n_q=1 时与 gene_dim 相等; n_q>1 时扩到 n_q*proj_dim, B2 参数 ~1.46M 对应此)
+        #   "cat":      始终输出 gene_dim (drug-agnostic 单通道与 attended 显式并行)
+        if cell_bypass_mode != "none":
+            bypass_out_dim = (n_query_tokens * proj_dim) if cell_bypass_mode == "residual" else gene_dim
+            self.bypass_proj = nn.Sequential(
+                nn.Linear(gene_dim, bypass_out_dim),
+                nn.BatchNorm1d(bypass_out_dim),
+                nn.ReLU(),
+            )
+            self.bypass_out_dim = bypass_out_dim
+            if cell_bypass_mode == "residual" and learnable_alpha:
+                # 残差调制强度, init=1.0 让模型从"等价 attended 主路径"起步逐步学调制
+                self.modulation_alpha = nn.Parameter(torch.tensor(1.0))
+        else:
+            self.bypass_out_dim = 0  # 占位, "none" 模式不消费
+
+        # fusion_dim 计算: 随 cell_bypass_mode 变化
+        #    "none":     cell_dim = proj_dim * n_query                  (= Phase 6)
+        #    "residual": cell_dim = n_query * proj_dim (与 attended 相同, 仅新增 bypass_proj 参数)
+        #    "cat":      cell_dim = gene_dim + n_query * proj_dim        (显式双通道)
+        if cell_bypass_mode == "cat":
+            cell_dim = gene_dim + n_query_tokens * proj_dim
+        else:  # "none" or "residual"
+            cell_dim = n_query_tokens * proj_dim
         if use_main_drug_emb:
             self.main_drug_proj = nn.Linear(gene_dim, drug_dim)
-            fusion_dim = proj_dim * n_query_tokens + drug_dim + drug_dim + pathway_dim
+            fusion_dim = cell_dim + drug_dim + drug_dim + pathway_dim
         else:
-            fusion_dim = proj_dim * n_query_tokens + drug_dim + pathway_dim
+            fusion_dim = cell_dim + drug_dim + pathway_dim
         self.fusion_dim = fusion_dim
 
         self.cross_attn = nn.MultiheadAttention(
@@ -153,7 +222,21 @@ class DrugResponsePredictor(nn.Module):
         else:
             attended_genes = attended.squeeze(1)                # (B, proj_dim) — 与原一致
 
-        parts = [attended_genes, drug_emb, pathway_emb]
+        # Phase 4.2 cell-side bypass: 让 cell-side 在 LODO 留出新 drug 时仍能稳
+        # 输出 drug-agnostic 表征, cross-attn 降级为残差调制 (而非独占主路径).
+        # 详见 [Phase4.2架构改造规划.md] §3 §4.1.
+        if self.cell_bypass_mode == "none":
+            cell_repr = attended_genes                          # Phase 6 严格一致
+        else:
+            bypass = gene_emb.mean(dim=1)                       # (B, gene_dim) drug-agnostic
+            bypass = self.bypass_proj(bypass)                   # (B, bypass_out_dim)
+            if self.cell_bypass_mode == "residual":
+                alpha = self.modulation_alpha if self.learnable_alpha else 1.0
+                cell_repr = bypass + alpha * attended_genes     # (B, n_query*proj_dim)
+            else:  # "cat"
+                cell_repr = torch.cat([bypass, attended_genes], dim=-1)  # (B, gene_dim + n_query*proj_dim)
+
+        parts = [cell_repr, drug_emb, pathway_emb]
         if self.use_main_drug_emb:
             assert main_drug_emb is not None and drug_idx is not None, \
                 "use_main_drug_emb=True requires main_drug_emb + drug_idx"
@@ -220,6 +303,89 @@ def _smoke_test() -> None:
     n_total2 = sum(1 for _ in predictor_main.parameters())
     print(f"[smoke] backward: {n_grad2}/{n_total2} params have grad")
     assert n_grad2 == n_total2, f"only {n_grad2}/{n_total2} params have grad"
+
+    # --- Phase 4.2 cell_bypass_mode 测试 (residual / cat) ---------------------
+    # 详见 [Phase4.2架构改造规划.md] §4.1 §4.4 §4.5.
+    def _test_bypass(mode: str, n_q: int, learn_alpha: bool, *,
+                     expect_bypass_extra_keys: bool, expect_residual_alpha: bool,
+                     expect_fusion_dim: int) -> None:
+        m = DrugResponsePredictor(
+            use_main_drug_emb=False, n_query_tokens=n_q,
+            cell_bypass_mode=mode, learnable_alpha=learn_alpha,
+        ).to(device)
+        n_p = sum(p.numel() for p in m.parameters())
+        keys = set(m.state_dict().keys())
+        assert m.fusion_dim == expect_fusion_dim, \
+            f"[{mode} n_q={n_q} alpha={learn_alpha}] fusion_dim {m.fusion_dim} != {expect_fusion_dim}"
+        has_bypass = any(k.startswith("bypass_proj.") for k in keys)
+        has_alpha = any(k == "modulation_alpha" for k in keys)
+        assert has_bypass == expect_bypass_extra_keys, \
+            f"[{mode}] bypass_proj keys present={has_bypass} (expect {expect_bypass_extra_keys})"
+        assert has_alpha == expect_residual_alpha, \
+            f"[{mode}] modulation_alpha present={has_alpha} (expect {expect_residual_alpha})"
+        m.train()
+        out, attn = m(gene_emb, drug_emb, pathway_emb)
+        assert out.shape == (B, 1), f"[{mode} n_q={n_q}] ic50_pred shape {out.shape}"
+        assert attn.shape == (B, 1, N_gene), f"[{mode} n_q={n_q}] attn shape {attn.shape}"
+        assert torch.isfinite(out).all() and torch.isfinite(attn).all()
+        loss = out.sum()
+        loss.backward()
+        n_grad = sum(1 for p in m.parameters() if p.grad is not None and p.requires_grad)
+        n_total = sum(1 for _ in m.parameters())
+        assert n_grad == n_total, f"[{mode} n_q={n_q}] only {n_grad}/{n_total} params have grad"
+        print(f"[smoke] bypass {mode} n_q={n_q} alpha={learn_alpha} OK "
+              f"| fusion_dim={m.fusion_dim} params={n_p:,} keys={len(keys)} "
+              f"has_bypass_proj={has_bypass} has_alpha={has_alpha}")
+        # 零化所有梯度, 防下一个测试复用张量
+        m.zero_grad(set_to_none=True)
+
+    # B1: residual + n_q=1 + learnable_alpha=True
+    # cell_dim = 1*256 = 256; fusion_dim = 256+128+64 = 448 (与 A0 一致, 但新增 bypass_proj+alpha)
+    _test_bypass("residual", 1, True,
+                 expect_bypass_extra_keys=True, expect_residual_alpha=True, expect_fusion_dim=448)
+    # residual + n_q=2 + learnable_alpha=False (alpha=1.0 固定, n_q>1 验证 bypass_proj 维度对齐)
+    # cell_dim = 2*256 = 512; fusion_dim = 512+128+64 = 704
+    _test_bypass("residual", 2, False,
+                 expect_bypass_extra_keys=True, expect_residual_alpha=False, expect_fusion_dim=704)
+    # B3: cat + n_q=1 (双通道显式并行)
+    # cell_dim = 256+256 = 512; fusion_dim = 512+128+64 = 704
+    _test_bypass("cat", 1, True,
+                 expect_bypass_extra_keys=True, expect_residual_alpha=False, expect_fusion_dim=704)
+    # cat + n_q=2 (plan §4.5 smoke 配置)
+    # cell_dim = 256+512 = 768; fusion_dim = 768+128+64 = 960
+    _test_bypass("cat", 2, True,
+                 expect_bypass_extra_keys=True, expect_residual_alpha=False, expect_fusion_dim=960)
+
+    # --- Phase 4.2 ∩ Phase 6 ckpt 严格兼容性校验 ---------------------------
+    # cell_bypass_mode="none" 必须产生与 Phase 6 predictor 严格一致的 state_dict 键集
+    # (bypass_proj/modulation_alpha 不实例化), 故 strict load_state_dict 通过.
+    predictor_none = DrugResponsePredictor(use_main_drug_emb=False, cell_bypass_mode="none").to(device)
+    none_keys = set(predictor_none.state_dict().keys())
+    predictor_resid = DrugResponsePredictor(
+        use_main_drug_emb=False, cell_bypass_mode="residual"
+    ).to(device)
+    resid_keys = set(predictor_resid.state_dict().keys())
+    resid_only = resid_keys - none_keys
+    # residual 模式新增: bypass_proj.* (Linear + BN1d, 含 BN running_mean/running_var/
+    # num_batches_tracked 3 个 buffer) + modulation_alpha. 余下应无任何额外键.
+    resid_bp = {k for k in resid_only if k.startswith("bypass_proj.")}
+    resid_alpha = {k for k in resid_only if k == "modulation_alpha"}
+    resid_other = resid_only - resid_bp - resid_alpha
+    assert resid_bp and len(resid_alpha) == 1 and not resid_other, \
+        f"residual-only keys unexpected: bp={sorted(resid_bp)} alpha={sorted(resid_alpha)} " \
+        f"other={sorted(resid_other)}"
+    cat_keys = set(DrugResponsePredictor(
+        use_main_drug_emb=False, cell_bypass_mode="cat"
+    ).to(device).state_dict().keys())
+    cat_only = cat_keys - none_keys
+    cat_bp = {k for k in cat_only if k.startswith("bypass_proj.")}
+    cat_other = cat_only - cat_bp
+    assert cat_bp and not cat_other, \
+        f"cat-only keys unexpected: bp={sorted(cat_bp)} other={sorted(cat_other)}"
+    print(f"[smoke] strict-compat: none_keys={len(none_keys)} "
+          f"residual_extra={len(resid_only)} (bypass_proj+alpha) "
+          f"cat_extra={len(cat_only)} (bypass_proj only) "
+          f"-> Phase 6 ckpt strict load OK with mode='none'")
 
     print("[smoke] ALL OK | dpredictor.py")
 
