@@ -1,0 +1,53 @@
+=== Sample Pair Split Statistics ===
+
+Total pairs: 66543
+Train: 53233 (79.998%)
+Val:   6655   (10.001%)
+Test:  6655  (10.001%)
+
+Cancer-type distribution (count):
+cancer_type                      all   train     val    test
+AML                             1506    1166     171     169
+B-cell_ALL                       679     679       0       0
+CML                              994     693     157     144
+Ewings_Sarcoma                   512     512       0       0
+T-cell_ALL                      1176     837     169     170
+bile_duct                        172     138      16      18
+breast                          6387    5099     640     648
+colorectal                      4400    3464     441     495
+endometrium                      853     687     146      20
+esophagus                       2468    2019     173     276
+glioma                          3628    2932     351     345
+kidney                          1793    1445     173     175
+leukemia_other                   319     254      36      29
+liver                           1364    1024     170     170
+lung_NSC                        7885    6251     802     832
+lung_small_cell                 5743    4563     583     597
+lymphoma_Burkitt                 511     510       0       1
+lymphoma_DLBCL                   492     473       8      11
+lymphoma_Hodgkin                 170     138      19      13
+lymphoma_other                   763     630     106      27
+medulloblastoma                  340     277      29      34
+melanoma                        4331    3356     484     491
+mesothelioma                     642     642       0       0
+multiple_myeloma                1506    1158     175     173
+neuroblastoma                   1429    1085     172     172
+osteosarcoma                     827     696     117      14
+other                            170     132      17      21
+ovary                           3750    3054     351     345
+pancreas                        2945    2302     299     344
+prostate                         514     514       0       0
+soft_tissue                     1363    1023     170     170
+stomach                         2474    2035     174     265
+thyroid                         1185     843     170     172
+upper_aerodigestive             1301     996     163     142
+urinary_tract                   1951    1606     173     172
+
+JS(train, all) = 0.0007
+JS(val,   all) = 0.0291
+JS(test,  all) = 0.0323
+(threshold < 0.05 -> OK)
+
+JS drug-distribution: train=0.0000 val=0.0003 test=0.0004
+
+Leakage: |train¡Éval|=0, |train¡Étest|=0, |val¡Étest|=0

@@ -1,0 +1,22 @@
+{
+  "_comment": "A3 freeze_main: freeze_encoder=True (预训练做 fixed feature extractor) + use_main_drug_emb=True (死分支消除). lr_encoder 保持 1e-5 因冻结时 lr 不影响",
+  "model": "gdgn",
+  "pretrain_ckpt": "data/model/pretrain/best_encoder.pt",
+  "output_dir": "data/model/ablation/03_freeze_main",
+  "batch_size": 64,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 1e-5,
+  "lr_head": 1e-3,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "freeze_encoder": true,
+  "use_main_drug_emb": true,
+  "aux_loss_weight": 0.0,
+  "num_heads": 4,
+  "n_query_tokens": 1,
+  "predictor_hidden": 256,
+  "seed": 42
+}

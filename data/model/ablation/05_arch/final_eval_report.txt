@@ -1,0 +1,31 @@
+================================================================================
+Phase 4 Final Evaluation Report | model=gdgn
+ckpt: data/model/ablation/05_arch/best_model.pt
+best epoch: 42
+================================================================================
+[Table 1] 主指标: train/val/test PCC / Spearman / RMSE / MAE / MSE
+split          PCC  Spearman      RMSE       MAE       MSE       N
+train       0.9190    0.8875    1.1698    0.8713    1.3685   53184
+val         0.9165    0.8838    1.1828    0.8839    1.3990    6655
+test        0.9131    0.8794    1.2119    0.8973    1.4687    6655
+
+[Table 2] 7 个无 DTI 药物子集 PCC (Phase 3 §10.4 tracking)
+split          PCC      RMSE       N  no_dti_n
+train       0.8773    1.3289    1777      1777
+val         0.8672    1.4420     220       220
+test        0.8631    1.4247     220       220
+
+[Table 3] 95% CI bootstrap (n=1000) for test PCC / RMSE
+PCC  95% CI: [0.9077, 0.9188]  (n_boot=1000)
+RMSE 95% CI: [1.1793, 1.2491]
+
+[Table 4] 训练曲线摘要
+best epoch: 42  val_pcc=0.9165
+total epochs logged: 50
+total train time: 38228.9s
+final lr_encoder=2.50e-05 lr_head=2.50e-04
+
+[Note] 数据泄漏口径:
+  - 主指标基于配对随机分 80/10/10 (Phase 1 sample_pairs_split.pt).
+  - 同一 cell / drug 会同时出现在 train/val/test, 评估的是已见 cell/drug 的新组合.
+  - LODO / LOCO 是真正的泛化口径, Phase 6 单独跑 (Phase 1 已备 ldo_splits.pt / lco_splits.pt).

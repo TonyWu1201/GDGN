@@ -134,21 +134,60 @@ def get_dataloaders(
     num_workers: int = 0,
     pin_memory: bool = True,
     load_hetero: bool = False,  # DataLoader 内通常不加载基图，避免 worker 重复
+    distributed: bool = False,
+    rank: int = 0,
+    world_size: int = 1,
+    seed: int = 42,
 ) -> dict:
-    """Return {'train': DataLoader, 'val': DataLoader, 'test': DataLoader}."""
+    """Return {'train': DataLoader, 'val': DataLoader, 'test': DataLoader}.
+
+    Parameters
+    ----------
+    batch_size : int
+        distributed=False 时为 per-step 总 batch; distributed=True 时解释为 **per-gpu**
+        batch (由调用方做 `total_batch // world_size` 切分后传入).
+    distributed : bool
+        True 时为每个 split 构造 DistributedSampler, 用 DDP 多卡训练.
+        训练器在每个 epoch 开始前需调用 loader["train"].sampler.set_epoch(epoch)
+        (val/test 的 sampler 不 shuffle, 可以不调).
+        所有 split 的 sampler 都 drop_last=True, 避免 pad 引起重复样本污染指标.
+    rank / world_size : int
+        DDP 进程编号和总数.
+    """
     loaders = {}
     for sp in ["train", "val", "test"]:
         ds = GDGNDataset(split=sp, load_hetero=load_hetero, load_drugs_mol=False)
         shuffle = (sp == "train")
-        loader = TorchDataLoader(
-            ds,
-            batch_size=batch_size,
-            shuffle=shuffle,
-            num_workers=num_workers,
-            pin_memory=pin_memory and torch.cuda.is_available(),
-            collate_fn=gdgn_collate,
-            drop_last=(sp == "train"),
-        )
+        if distributed:
+            from torch.utils.data.distributed import DistributedSampler
+            sampler = DistributedSampler(
+                ds,
+                num_replicas=world_size,
+                rank=rank,
+                shuffle=shuffle,
+                drop_last=True,  # 避免 pad 重复样本污染指标 (各 rank 末尾不完整 batch 整段切)
+                seed=split_seed if split_seed is not None else seed,
+            )
+            loader = TorchDataLoader(
+                ds,
+                batch_size=batch_size,  # 已经是 per-gpu
+                shuffle=False,           # 用 sampler 后不能再 shuffle
+                num_workers=num_workers,
+                pin_memory=pin_memory and torch.cuda.is_available(),
+                collate_fn=gdgn_collate,
+                drop_last=False,         # sampler 已经 drop_last
+                sampler=sampler,
+            )
+        else:
+            loader = TorchDataLoader(
+                ds,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                num_workers=num_workers,
+                pin_memory=pin_memory and torch.cuda.is_available(),
+                collate_fn=gdgn_collate,
+                drop_last=(sp == "train"),
+            )
         loaders[sp] = loader
     return loaders
 

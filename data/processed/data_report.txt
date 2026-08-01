@@ -1,0 +1,75 @@
+=== GDGN Phase 1 — 数据验证报告 ===
+
+## 1. 维度一致性
+  hetero gene.num_nodes  = 8412
+  hetero drug.num_nodes  = 184
+  len(core_gene_order)   = 8412
+  gene_static_features   = (8412, 1280)
+  drug_features          = (184, 1030)
+  core_gene_mask.sum()   = 8412
+  core_gene_idx_in_esm   = (8412,)
+  cell_line_features:
+    expression         (404, 8412)
+    mutation           (404, 8412)
+    copynumber         (404, 8412)
+    methylation        (404, 8412)
+    pathway_activity   (404, 186)
+  n_cells (canonical)    = 404
+  n_drugs (cid_to_idx)   = 184
+  n_cells (cell_to_idx)  = 404
+
+## 2. PPI / DTI 边索引合法性
+  PPI edge_index shape     = (2, 672784)
+  PPI max gene idx = 8411  (< 8412 ? OK)
+  PPI min gene idx = 0  (>= 0 ? OK)
+  DTI edge_index shape     = (2, 1124)
+  DTI drug max = 183  (< 184 ? OK)
+  DTI gene max = 8394  (< 8412 ? OK)
+  DTI drug min = 0  (>= 0 ? OK)
+  DTI gene min = 0  (>= 0 ? OK)
+
+## 3. 样本对标签合法性
+  train : n=53233 | cell_idx∈[0,403] drug_idx∈[0,183]
+  val   : n=6655 | cell_idx∈[0,403] drug_idx∈[0,183]
+  test  : n=6655 | cell_idx∈[0,403] drug_idx∈[0,183]
+  NaN ic50 count: 0  (expected 0 ? OK)
+  label range OK: OK
+
+## 4. 划分无泄漏 (random 80/10/10)
+  |train ∩ val|   = 0 (expected 0)
+  |train ∩ test|  = 0 (expected 0)
+  |val   ∩ test|  = 0 (expected 0)
+  LODO folds = 184 | LOCO folds = 35
+  LODO folds closure OK: OK | LOCO folds closure OK: OK
+
+## 5. 癌型分层质量
+  JS(train, all) = 0.0007  (< 0.05 ? OK)
+  JS(val,   all) = 0.0291  (< 0.05 ? OK)
+  JS(test,  all) = 0.0323  (< 0.05 ? OK)
+
+## 6. 孤立基因 / 自环
+  isolated gene nodes: 2 / 8412  (0.024%, <=5% ? OK)
+  PPI self-loops: 0  (0.0000%, <0.1% ? OK)
+  DTI self-loops: not applicable (cross-type drug<->gene edges; drug idx ∈[0,183], gene idx ∈[0,8411] overlap by index but refer to different node types)
+
+## 7. 特征标准化检查
+  drug_features (ECFP+理化, Z-score): mean=0.0000 std=0.9809 min=-5.028 max=13.528
+  gene ESM-2 static: mean=-0.0009 std=0.2038 min=-8.641 max=1.629 (range [-12,12]? OK)
+  pathway_activity: shape=(404, 186) mean=0.0000 std=1.0000
+
+## 8. 通路活性对齐 (与 ssGSEA 输出 vs canonical 顺序)
+  pathway shape: clf=(404, 186) orig=(404, 186) | aligned to canonical: OK
+  pathway Z-score mean~0 std~1: OK
+
+## 9. GPU 内存估算（策略 B：静态基图常驻 + batch 动态注入）
+  gene static   :   43.07 MB
+  drug features :    0.76 MB
+  PPI edge_index:   10.76 MB  weight:    2.69 MB
+  DTI edge_index:    0.02 MB  weight:    0.00 MB
+  cell_line_features (5 omics):   54.68 MB
+  ----------------------------------
+  total static常驻             :  111.98 MB
+  (训练激活另算；策略 B 下无 batch × 整图 clone，估算远低于方案 A)
+
+## 10. 最终结论
+  All critical checks passed: OK

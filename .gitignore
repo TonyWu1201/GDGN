@@ -9,10 +9,19 @@ wheels/
 # Virtual environments
 .venv
 
-data/*
-!data/.gitkeep
+
+
+data/raw/*
+!data/raw/cell_line_omics
+data/raw/cell_line_omics/*
+!data/raw/cell_line_omics/Cell_lines_annotations_20181226.txt
+data/processed/gene_embeddings/esm2_gene_embeddings.npy
+data/processed/gene_embeddings/gene_order.txt
+data/processed/protein_protein_interaction/ppi_list.pkl
+data/processed/protein_protein_interaction/ppi_filtered.csv
 
 guidance/*
 !guidance/.gitkeep
 
 tar_archive.ps1
+GDGN.tar.gz
