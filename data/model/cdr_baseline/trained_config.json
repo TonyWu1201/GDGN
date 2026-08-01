@@ -1,0 +1,20 @@
+{
+  "model": "cdr_baseline",
+  "output_dir": "data/model/cdr_baseline",
+  "batch_size": 64,
+  "max_epochs": 50,
+  "early_stopping_patience": 10,
+  "lr_patience": 5,
+  "lr_factor": 0.5,
+  "lr_encoder": 0.001,
+  "lr_head": 0.001,
+  "weight_decay": 0.0,
+  "grad_clip": 1.0,
+  "use_relu": true,
+  "use_bn": true,
+  "use_GMP": true,
+  "use_mut": true,
+  "use_gexp": true,
+  "use_methy": true,
+  "seed": 42
+}

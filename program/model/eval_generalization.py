@@ -504,7 +504,7 @@ def evaluate_generalization(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", choices=["gdgn", "baseline_simple"], default="gdgn")
+    ap.add_argument("--model", choices=["gdgn", "baseline_simple", "cdr_baseline"], default="gdgn")
     ap.add_argument("--ckpt", type=str, required=True, help="best_model.pt 路径 (Phase 4 训练产出)")
     ap.add_argument("--output_dir", type=str, default=None,
                     help="报告输出目录 (默认 data/model/<model>/)")

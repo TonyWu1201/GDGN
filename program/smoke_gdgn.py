@@ -26,6 +26,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from program.model.dataset import inject_batch_omics, load_cell_line_features, load_hetero_graph
 from program.model.baseline_simple import BaselineSimpleModel
+from program.model.cdr_baseline import CDRBaselineModel
 from program.model.gdgn_model import GDGNModel
 
 
@@ -115,6 +116,17 @@ def main():
     n_total_flatten_d = sum(1 for _ in model_d.flatten_cell_enc.parameters())
     assert n_grad_flatten_d == n_total_flatten_d, \
         f"gdgn-D flatten_cell_enc only {n_grad_flatten_d}/{n_total_flatten_d} have grad"
+
+    print("[smoke] === Path E: CDRBaselineModel (DeepCDR 原版完整复刻) ===")
+    model_c = CDRBaselineModel(device=device).to(device)
+    n_enc_c = sum(p.numel() for p in model_c.encoder_parameters())
+    n_head_c = sum(p.numel() for p in model_c.head_parameters())
+    print(f"[smoke] cdr_baseline encoder={n_enc_c:,} head={n_head_c:,}")
+    ic50_c, ne_c, ng_eC, nh_c, ng_hC = _forward_backward(model_c, cell_idx, drug_idx, omics, "cdr_baseline", False)
+    print(f"[smoke] cdr_baseline forward OK: ic50={tuple(ic50_c.shape)} mean={ic50_c.mean():.4f}")
+    print(f"[smoke] cdr_baseline grad: encoder {ng_eC}/{ne_c}, head {ng_hC}/{nh_c}")
+    assert ng_hC == nh_c, f"cdr_baseline head only {ng_hC}/{nh_c} have grad"
+    assert ng_eC == ne_c, f"cdr_baseline encoder only {ng_eC}/{ne_c} have grad"
 
     print("[smoke] === ckpt save + reload ===")
     tmp_dir = Path("data/model/gdgn")

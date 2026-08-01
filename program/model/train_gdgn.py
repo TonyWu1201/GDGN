@@ -79,6 +79,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from program.model.baseline_simple import BaselineSimpleModel
+from program.model.cdr_baseline import CDRBaselineModel
 from program.model.dataset import get_dataloaders, inject_batch_omics, load_cell_line_features, load_hetero_graph
 from program.model.gdgn_model import GDGNModel
 
@@ -131,7 +132,18 @@ def build_model(model_name: str, hetero, config: dict, device) -> torch.nn.Modul
         ).to(device)
     elif model_name == "baseline_simple":
         return BaselineSimpleModel(hetero=hetero, device=device).to(device)
-    raise ValueError(f"unknown model_name: {model_name}; expect 'gdgn' or 'baseline_simple'")
+    elif model_name == "cdr_baseline":
+        return CDRBaselineModel(
+            device=device,
+            unit_list=config.get("unit_list", None),
+            use_relu=config.get("use_relu", True),
+            use_bn=config.get("use_bn", True),
+            use_GMP=config.get("use_GMP", True),
+            use_mut=config.get("use_mut", True),
+            use_gexp=config.get("use_gexp", True),
+            use_methy=config.get("use_methy", True),
+        ).to(device)
+    raise ValueError(f"unknown model_name: {model_name}; expect 'gdgn', 'baseline_simple' or 'cdr_baseline'")
 
 
 def resolve_no_dti_drug_idx(force_rebuild: bool = False) -> list[int]:
@@ -698,12 +710,24 @@ def default_config(model_name: str) -> dict:
             "weight_decay": 0.0, "grad_clip": 1.0,
             "seed": 42,
         }
+    elif model_name == "cdr_baseline":
+        return {
+            "model": "cdr_baseline",
+            "output_dir": "data/model/cdr_baseline",
+            "batch_size": 64, "max_epochs": 50,
+            "early_stopping_patience": 10, "lr_patience": 5, "lr_factor": 0.5,
+            "lr_encoder": 1e-3, "lr_head": 1e-3,  # 无预训练, 全网络从零训练 (承自原版 Adam lr=0.001)
+            "weight_decay": 0.0, "grad_clip": 1.0,
+            "use_relu": True, "use_bn": True, "use_GMP": True,
+            "use_mut": True, "use_gexp": True, "use_methy": True,
+            "seed": 42,
+        }
     raise ValueError(f"unknown model: {model_name}")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", choices=["gdgn", "baseline_simple"], default="gdgn")
+    ap.add_argument("--model", choices=["gdgn", "baseline_simple", "cdr_baseline"], default="gdgn")
     ap.add_argument("--config", type=str, default=None, help="path to JSON config (覆盖 default_config)")
     ap.add_argument("--output_dir", type=str, default=None, help="覆盖 config 里的 output_dir")
     ap.add_argument("--smoke", action="store_true", help="限 5 batch / 1 epoch 调试")
