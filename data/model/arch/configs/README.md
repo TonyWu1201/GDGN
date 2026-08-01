@@ -4,18 +4,19 @@
 > 详细规划见 [guidance/Phase4.2架构改造规划.md](../../../guidance/Phase4.2架构改造规划.md)。
 > Phase 6 消融对照见 [data/model/ablation/summary.md](../../ablation/summary.md)。
 
-## 本批变体 (本批实施: B1 / B2 / B3)
+## 本批变体 (本批实施: B1 / B2 / B3 / B4)
 
-`feature/phase4.2-arch-bypass-cell-crossattn` 分支本次仅实施 plan §4 完整规定的
+`feature/phase4.2-arch-bypass-cell-crossattn` 分支已实施 plan §4 完整规定的
 `cell_bypass_mode` (none/residual/cat) + `learnable_alpha` 两参数,覆盖 B1/B2/B3。
-B4 dual_cell / B5 cross-attn dropout / B6 gate 在 plan §4 未给出代码,已暂缓;
-按 [Phase4.2架构改造规划.md] §10.4,待 B1/B3 跑出结果后按 §8.4 模式再定是否实现。
+B4 dual_cell 于 2026-08-01 按 plan §5.4 + §10.4 补充实施 (gdgn_model.dual_cell +
+dpredictor.extra_cell_dim,见下方 B4 行)。B5 / B6 仍暂缓。
 
-| 文件 | ID | 路线 | `cell_bypass_mode` | `n_query_tokens` | `predictor_hidden` | head_params 预估 | 备注 |
-|---|:---:|:---:|:---:|:---:|:---:|---:|---|
-| `B1_bypass_residual.json` | B1 | L1 主推荐 | `residual` | 1 | 256 | ~510K | bypass 主路径 + cross-attn 残差调制, 与 A4 做 head-to-head |
-| `B2_bypass_arch.json` | B2 | L1 + 扩容 | `residual` | 4 | 512 | ~1.46M | 在 B1 已稳基础上扩容 (n_q=4 + hidden=512), 与 A5 arch 对照 |
-| `B3_bypass_cat.json` | B3 | L2 主推荐 | `cat` | 1 | 256 | ~576K | 双通道显式并行 cell_repr=cat([bypass,attended]), 不需 modulation 强度调参 |
+| 文件 | ID | 路线 | `cell_bypass_mode` | `dual_cell` | `n_query_tokens` | `predictor_hidden` | head_params 预估 | 备注 |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|---:|---|
+| `B1_bypass_residual.json` | B1 | L1 主推荐 | `residual` | false | 1 | 256 | ~510K | bypass 主路径 + cross-attn 残差调制, 与 A4 做 head-to-head |
+| `B2_bypass_arch.json` | B2 | L1 + 扩容 | `residual` | false | 4 | 512 | ~1.46M | 在 B1 已稳基础上扩容 (n_q=4 + hidden=512), 与 A5 arch 对照 |
+| `B3_bypass_cat.json` | B3 | L2 主推荐 | `cat` | false | 1 | 256 | ~576K | 双通道显式并行 cell_repr=cat([bypass,attended]), 不需 modulation 强度调参 |
+| `B4_dual_encoder.json` | B4 | L3 兜底 | `residual` | **true** | 1 | 256 | ~577K (+ flatten enc ~17.5M) | GDGN 图路径 ‖ baseline 原版 SimpleCellEncoder flatten 路径 (drug-agnostic), cell=512, fusion=704 |
 
 **共同点**(承自 A4 no_pretrain,基于 Phase 6 已证"Phase 2 预训练有害"):
 - `pretrain_ckpt=null`(全新 init,不加载 Phase 2 best_encoder.pt)
@@ -25,13 +26,22 @@ B4 dual_cell / B5 cross-attn dropout / B6 gate 在 plan §4 未给出代码,已�
 - `freeze_encoder=false`, `seed=42`, `max_epochs=50`, `early_stopping_patience=10`
 - `grad_clip=1.0`, `weight_decay=0.0`, `num_heads=4`, `aux_loss_weight=0.0`
 
-## 暂缓变体 (待 B1/B3 出结果后决定是否实施)
+## 暂缓变体 (待 B1/B3/B4 结果消化后决定是否实施)
 
 | ID | 路线 | 原计划参数 | 状态 | 原因 |
 |---|:---:|---|:---:|---|
-| B4 | L3 dual_encoder | `gdgn_model.dual_cell=True`(GDGNEncoder + flatten MLP 并行) | 暂缓 | plan §4 没代码,§5.4 仅作设计草案;实施需把 `SimpleCellEncoder` 内嵌进 `GDGNModel` |
-| B5 | L1 补充 | B1 + cross-attn dropout=0.5 | 暂缓 | 需暴露 `nn.MultiheadAttention(dropout=...)`,§4 之外的小改动;留作"抑制 cross-attn 主导"的补充对照 |
-| B6 | L1 低风险 | B1 + gate 由 drug_emb MLP 出,`cell_repr = bypass*gate + attended*(1-gate)` | 暂缓 | plan §5.6 仅作草案,gate MLP 设计 plan §4 未规定 |
+| B5 | L1 补充 | B1 + cross-attn dropout=0.5 | 暂缓 | 需暴露 `nn.MultiheadAttention(dropout=...)`;留作"抑制 cross-attn 主导"的补充对照 |
+| B6 | L1 低风险 | B1 + gate 由 drug_emb MLP 出,`cell_repr = bypass*gate + attended*(1-gate)` | 暂缓 | gate MLP 设计 plan §5.6 仅作草案 |
+
+> B4 dual_cell 已于 2026-08-01 实施 (按 plan §5.4/§10.4, 因为 B1/B3 判定
+> bypass 思路无效, §8.4 触发模式 "B1 ≈ B3 < A4 + 0.02 → 转向 B4")。
+> 实施内容: `gdgn_model.py` `dual_cell` 参数 (内嵌 baseline 原版
+> `SimpleCellEncoder`, ~17.5M) + `dpredictor.py` `extra_cell_dim` (fusion 追加
+> flatten 通道) + `train_gdgn.py` `--dual_cell` override + `B4_dual_encoder.json`。
+>
+> ⚠️ **参数量修正**: plan §4.4 预估 flatten ~2.3M 有误, 原样复制
+> `SimpleCellEncoder` 实际 ~17.5M (首层 Linear(33834, 512) = 17.3M),
+> B4 总参数 ~19.3M。训练瓶颈仍在 GDGN per-cell GNN, 耗时与 B1 相当。
 
 ## 执行流程 (每个变体三步)
 
@@ -104,17 +114,31 @@ uv run python program/model/eval_generalization.py \
     --output_dir data/model/arch/B2_bypass_arch --batch_size 32
 echo "[$(date)] DONE B2_bypass_arch"
 
-echo "Phase 4.2 arch variants (B1+B3+B2) finished."
+# B4 dual encoder (B1/B3 判定 bypass 思路无效后按 §8.4 触发; L3 兜底):
+# 训练: ~12-15h; post_eval + LODO/LOCO 同三步流程
+echo "[$(date)] START B4_dual_encoder"
+torchrun --nproc_per_node=4 program/model/train_gdgn.py \
+    --model gdgn --config data/model/arch/configs/B4_dual_encoder.json
+uv run python program/model/train_gdgn.py --model gdgn --post_eval \
+    --ckpt data/model/arch/B4_dual_encoder/best_model.pt \
+    --output_dir data/model/arch/B4_dual_encoder
+uv run python program/model/eval_generalization.py \
+    --model gdgn --ckpt data/model/arch/B4_dual_encoder/best_model.pt \
+    --output_dir data/model/arch/B4_dual_encoder --batch_size 32
+echo "[$(date)] DONE B4_dual_encoder"
+
+echo "Phase 4.2 arch variants (B1+B3+B2+B4) finished."
 # nohup bash arch_run.sh > nohup.arch.log 2>&1 &
 ```
 
 ## 时间估算 (4 卡 DDP, plan §7.1)
 
 | 变体 | 训练 (~10-15h) | post_eval (~2min) | generalization (~10min) | 合计 | 优先级 |
-|---|---:|---:|---:|---:|:---:|
+|---|---|---:|---:|---:|:---:|
 | B1 bypass_residual | ~12h | ~2min | ~10min | ~12h | **必跑(诊断核心)** |
 | B3 bypass_cat | ~12h | ~2min | ~10min | ~12h | **必跑(诊断核心)** |
-| B2 bypass_arch(参数 +40%) | ~14h | ~2min | ~10min | ~14h | **推荐(B1/B3 ≥ A4+0.05 后再跑)** |
+| B2 bypass_arch(参数 +40%) | ~14h | ~2min | ~10min | ~14h | 推荐(已跑 B1/B3 后判定未触发) |
+| B4 dual_encoder(参数 ~19.3M) | ~15h | ~2min | ~10min | ~15h | **B1/B3 未达标后触发, L3 兜底** |
 
 **必跑 2 个** ~24h ≈ 1 天即可判定 B1/B3 哪条路线更有潜力。
 **+ B2 推荐** ~38h ≈ 1.5 天验证扩容收益。
@@ -146,10 +170,22 @@ echo "Phase 4.2 arch variants (B1+B3+B2) finished."
 |---|---|---|
 | B1 > A4 + 0.05 | bypass + residual 路线有效 | 选 B1 作新基线,继续优化 bypass 投影 |
 | B3 > B1 | cat 双通更好 | B3 成新 baseline,继续 cat 路线扩展 |
-| B1 ≈ B3 < A4 + 0.02 | bypass 思路无效 | 转向 B4 dual encoder(dual 工程上更接近 baseline),触发 B4 暂缓项实施 |
+| B1 ≈ B3 < A4 + 0.02 | bypass 思路无效 | **已触发 → B4 dual encoder 已实施并跑完 (2026-08-01)** |
 | B2 > B1 + 0.03 | 扩容有效 | B2 作新基线 |
 | B2 ≈ B1 | 扩容无效,bypass 是瓶颈主因 | 优化 bypass 设计(pool 策略 + 投影) |
 | 所有 B1-B3 LODO < 0.70 | 架构改造失败 | 换思路:DrugEncoder 扩容 + cross-attn 改 K/V 角色互换(gene 当 query 去查 drug),作 Phase 8 候选 |
+
+### B4 判定锚 (plan §5.4 / §8.4) — 已回填
+
+| 锚 | 实测 (2026-08-01) | 判定 |
+|---|---|---|
+| LODO mean PCC > 0.80 | B4 = **0.7784** | ✗ 未追平 baseline (差 0.037) |
+| B4 LOCO mean < 0.92 | B4 = **0.9484** | ✅ LOCO 未退化 |
+| B4 LODO < 0.70 | 0.7784 > 0.70 | ✅ 未判死,暂不转 Phase 8 |
+
+> **B4 总结**: test PCC 0.9354 (≥0.93 达标)、LODO 0.7784 (GDGN 历史最佳,
+> +0.084 vs A4)、LOCO 0.9484、7 无 DTI pooled 0.9134。flatten 主通道恢复
+> overall fit 但 drug OOD 仍差 baseline 0.037。详见 summary.md §3.1 下一步选项。
 
 ## 跨变体对比矩阵 (summary.md 模板)
 

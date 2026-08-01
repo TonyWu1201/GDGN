@@ -48,6 +48,7 @@ from program.model.drug_encoder import DrugEncoder, drug_encoder_forward_batch, 
 from program.model.gene_encoder import GeneEncoder
 from program.model.pathway_encoder import PathwayEncoder
 from program.model.pretrain import omics_to_per_gene
+from program.model.baseline_simple import SimpleCellEncoder
 
 
 class GDGNModel(nn.Module):
@@ -76,6 +77,13 @@ class GDGNModel(nn.Module):
         [Phase4.2架构改造规划.md] §4.1.
     learnable_alpha : bool
         Phase 4.2 residual 模式的可学习调制强度 (默认 True).
+    dual_cell : bool
+        Phase 4.2 B4 dual encoder 开关 (默认 False):
+        True 时在 GDGN 图路径 (gene_enc -> cross-attn/bypass) 之外并行一个
+        baseline 原版 SimpleCellEncoder flatten 路径 (drug-agnostic 256 维),
+        cell_repr = cat([图路径 cell_repr (residual/bypass 输出), flatten 嵌入])
+        -> fusion_dim = 704. 复制 baseline 已证明的 drug-agnostic cell 优势
+        (plan §5.4 L3). flatten 参数计入 encoder_parameters() (lr_encoder 组).
     """
 
     def __init__(
@@ -90,6 +98,7 @@ class GDGNModel(nn.Module):
         predictor_hidden: int = 256,
         cell_bypass_mode: str = "none",
         learnable_alpha: bool = True,
+        dual_cell: bool = False,
     ):
         super().__init__()
         self._device = torch.device(device)
@@ -97,12 +106,28 @@ class GDGNModel(nn.Module):
         self.freeze_encoder = bool(freeze_encoder)
         self.cell_bypass_mode = cell_bypass_mode
         self.learnable_alpha = learnable_alpha
+        self.dual_cell = bool(dual_cell)
 
         self.gene_enc = GeneEncoder(
             hetero, pretrain_ckpt=pretrain_ckpt, device=device, freeze=freeze_encoder,
         )
         self.drug_enc = DrugEncoder(atom_dim=75, hidden=256, out_dim=128).to(device)
         self.pathway_enc = PathwayEncoder(pathway_in_dim=186, pathway_dim=64).to(device)
+
+        # Phase 4.2 B4 dual encoder: 并行 baseline 原版 flatten cell 路径
+        # (SimpleCellEncoder, 无 GNN / 无 PPI, drug-agnostic; 复制 baseline_simple
+        # 原始实现 = ~17.4M 参数). extra_cell_dim 与 cell_bypass_mode 正交:
+        # 默认按 plan §5.4 组合 residual + extra 256; 其它 bypass 模式亦可配.
+        if self.dual_cell:
+            self.flatten_cell_enc = SimpleCellEncoder(
+                n_genes=int(hetero["gene"].num_nodes), n_omics_ch=4,
+                pathway_in_dim=186, out_dim=256,
+            ).to(device)
+            extra_cell_dim = 256
+        else:
+            self.flatten_cell_enc = None
+            extra_cell_dim = 0
+
         self.predictor = DrugResponsePredictor(
             gene_dim=256, drug_dim=128, pathway_dim=64,
             proj_dim=256, num_heads=num_heads, hidden_dim=predictor_hidden, dropout=0.3,
@@ -110,6 +135,7 @@ class GDGNModel(nn.Module):
             n_query_tokens=n_query_tokens,
             cell_bypass_mode=cell_bypass_mode,
             learnable_alpha=learnable_alpha,
+            extra_cell_dim=extra_cell_dim,
         ).to(device)
 
         self.gene_x_static = hetero["gene"].x.to(self._device)
@@ -141,20 +167,35 @@ class GDGNModel(nn.Module):
         drug_emb = drug_encoder_forward_batch(self.drug_enc, drug_idx, self.drug_mol_graphs, self._device)
         pathway_emb = self.pathway_enc(omics["pathway"].to(self._device))
 
+        # Phase 4.2 B4 dual encoder: flatten 路径与 baseline_simple 完全一致
+        # (输入 omics_4 flatten + raw pathway), 输出 drug-agnostic 256 维.
+        extra_cell_emb = None
+        if self.dual_cell:
+            extra_cell_emb = self.flatten_cell_enc(
+                omics_4, omics["pathway"].to(self._device))
+
         if self.use_main_drug_emb:
             ic50_pred, attn_weights = self.predictor(
                 gene_emb, drug_emb, pathway_emb,
                 main_drug_emb=main_drug_emb, drug_idx=drug_idx,
+                extra_cell_emb=extra_cell_emb,
             )
         else:
-            ic50_pred, attn_weights = self.predictor(gene_emb, drug_emb, pathway_emb)
+            ic50_pred, attn_weights = self.predictor(
+                gene_emb, drug_emb, pathway_emb, extra_cell_emb=extra_cell_emb)
         return ic50_pred, attn_weights
 
     def encoder_parameters(self):
-        """Phase 4 trainer 用: 返回三编码器参数 (param group 0, lr_encoder)."""
+        """Phase 4 trainer 用: 返回三编码器参数 (param group 0, lr_encoder).
+
+        dual_cell=True (B4) 时追加 flatten_cell_enc 参数 (与 baseline_simple 的
+        cell_enc 分组一致, lr_encoder=1e-4).
+        """
         params = list(self.gene_enc.parameters()) + \
                  list(self.drug_enc.parameters()) + \
                  list(self.pathway_enc.parameters())
+        if self.dual_cell:
+            params += list(self.flatten_cell_enc.parameters())
         return params
 
     def head_parameters(self):
@@ -264,6 +305,45 @@ def _smoke_test() -> None:
             f"{mode}: head only {n_grad_head_bp}/{n_total_head_bp} have grad"
         print(f"[smoke] cell_bypass_mode={mode} OK | encoder={n_enc_bp:,} head={n_head_bp:,} "
               f"(expect residual>B1 ~510K head, cat>B3 ~576K head)")
+
+    # --- Phase 4.2 B4 dual encoder 端到端校验 -----------------------------
+    # 详见 [Phase4.2架构改造规划.md] §5.4. B4 = dual_cell=True +
+    # cell_bypass_mode="residual": 图路径 (bypass+alpha*attended, 256) ‖
+    # SimpleCellEncoder flatten 路径 (drug-agnostic, 256) -> cell 512 -> fusion 704.
+    # cat 模式: cell 512 (bypass‖attended) + flatten 256 -> fusion 960.
+    for mode in ("residual", "cat"):
+        expect_fusion = 704 if mode == "residual" else 960
+        model_dual = GDGNModel(
+            hetero=hetero, pretrain_ckpt=None, device=device, freeze_encoder=False,
+            cell_bypass_mode=mode, learnable_alpha=True, dual_cell=True,
+        ).to(device)
+        n_enc_dual = sum(p.numel() for p in model_dual.encoder_parameters())
+        n_head_dual = sum(p.numel() for p in model_dual.head_parameters())
+        assert model_dual.predictor.fusion_dim == expect_fusion, \
+            f"dual_cell({mode}) fusion_dim {model_dual.predictor.fusion_dim} != {expect_fusion}"
+        n_flatten = sum(p.numel() for p in model_dual.flatten_cell_enc.parameters())
+        model_dual.train()
+        ic50_dual, attn_dual = model_dual(cell_idx, drug_idx, omics)
+        assert ic50_dual.shape == (4, 1), f"dual {mode}: ic50_pred shape {ic50_dual.shape}"
+        assert attn_dual.shape == (4, 1, n_genes), f"dual {mode}: attn shape {attn_dual.shape}"
+        assert torch.isfinite(ic50_dual).all() and torch.isfinite(attn_dual).all()
+        loss_dual = ic50_dual.sum()
+        loss_dual.backward()
+        # use_main_drug_emb=False 时 proj_drug/drug-BN 死分支无梯度 (M2 已知行为),
+        # 只对新增的 flatten_cell_enc 做全梯度断言.
+        n_grad_flatten = sum(
+            1 for p in model_dual.flatten_cell_enc.parameters()
+            if p.grad is not None and p.requires_grad)
+        n_total_flatten = sum(1 for _ in model_dual.flatten_cell_enc.parameters())
+        assert n_grad_flatten == n_total_flatten, \
+            f"dual {mode}: flatten_cell_enc only {n_grad_flatten}/{n_total_flatten} have grad"
+        n_grad_head_dual = sum(
+            1 for p in model_dual.head_parameters() if p.grad is not None and p.requires_grad)
+        n_total_head_dual = sum(1 for _ in model_dual.head_parameters())
+        assert n_grad_head_dual == n_total_head_dual, \
+            f"dual {mode}: head only {n_grad_head_dual}/{n_total_head_dual} have grad"
+        print(f"[smoke] dual_cell={mode} OK | encoder={n_enc_dual:,} "
+              f"(flatten_cell_enc={n_flatten:,}) head={n_head_dual:,} fusion_dim={model_dual.predictor.fusion_dim}")
 
     print("[smoke] ALL OK | gdgn_model.py")
 

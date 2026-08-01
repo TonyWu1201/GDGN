@@ -127,6 +127,7 @@ def build_model(model_name: str, hetero, config: dict, device) -> torch.nn.Modul
             predictor_hidden=config.get("predictor_hidden", 256),
             cell_bypass_mode=config.get("cell_bypass_mode", "none"),
             learnable_alpha=config.get("learnable_alpha", True),
+            dual_cell=config.get("dual_cell", False),
         ).to(device)
     elif model_name == "baseline_simple":
         return BaselineSimpleModel(hetero=hetero, device=device).to(device)
@@ -360,6 +361,7 @@ def train_gdgn(config: dict, smoke: bool = False) -> dict:
         bypass_mode = config.get('cell_bypass_mode', 'none')
         print(f"[train/rank {rank}/{world_size}] step 3/4: pre build_model "
               f"(model={config['model']} cell_bypass_mode={bypass_mode} "
+              f"dual_cell={config.get('dual_cell', False)} "
               f"n_query_tokens={config.get('n_query_tokens', 1)} "
               f"predictor_hidden={config.get('predictor_hidden', 256)})", flush=True)
         model = build_model(config["model"], hetero, config, device)
@@ -683,6 +685,7 @@ def default_config(model_name: str) -> dict:
             "aux_loss_weight": 0.0, "num_heads": 4,
             "n_query_tokens": 1, "predictor_hidden": 256,
             "cell_bypass_mode": "none", "learnable_alpha": True,
+            "dual_cell": False,
             "seed": 42,
         }
     elif model_name == "baseline_simple":
@@ -722,6 +725,9 @@ def main():
     ap.add_argument("--learnable_alpha", choices=["true", "false"], default=None,
                     help="Phase 4.2 residual 残差调制强度是否可学习 (默认 true; "
                          "仅 cell_bypass_mode=residual 时生效)")
+    ap.add_argument("--dual_cell", choices=["true", "false"], default=None,
+                    help="Phase 4.2 B4 dual encoder 开关 (默认 false; true 时并行 "
+                         "baseline SimpleCellEncoder flatten 路径, extra_cell_dim=256)")
     ap.add_argument("--aux_loss_weight", type=float, default=None)
     ap.add_argument("--build_no_dti_cache", action="store_true",
                     help="只解析并缓存 11 无 DTI idx 到 no_dti_drug_idx.json, 不训练")
@@ -763,6 +769,8 @@ def main():
         config["cell_bypass_mode"] = args.cell_bypass_mode
     if args.learnable_alpha is not None:
         config["learnable_alpha"] = (args.learnable_alpha == "true")
+    if args.dual_cell is not None:
+        config["dual_cell"] = (args.dual_cell == "true")
     if args.aux_loss_weight is not None:
         config["aux_loss_weight"] = args.aux_loss_weight
 

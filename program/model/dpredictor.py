@@ -42,6 +42,8 @@ Phase 4.2 参数量 (cell_bypass_mode != "none", use_main_drug_emb=False, 来自
     B1  residual | n_q=1 | hidden=256 : head ~510K   (+bypass_proj ~65K vs A0 444K)
     B2  residual | n_q=4 | hidden=512 : head ~1.46M  (+bypass_proj ~264K, MLP 加宽)
     B3  cat      | n_q=1 | hidden=256 : head ~576K   (cell_repr 512 -> fusion 704)
+    B4  residual | n_q=1 | hidden=256 | extra_cell_dim=256 : head ~576K
+        (fusion 704, extra 通道参数在 GDGNModel.flatten_cell_enc, 不在本模块)
 
 ⚠️ BatchNorm1d B=1 隐患: train 模式下 B=1 必触发 ValueError. Phase 4 trainer 必须
 drop_last=True + 评估切 eval(). 单元 smoke 用 B>=4 远离此隐患. Phase 4.2
@@ -91,12 +93,19 @@ class DrugResponsePredictor(nn.Module):
     learnable_alpha : bool
         Phase 4.2 residual 模式的可学习调制强度 (默认 True); False 时 alpha=1.0 固定.
         仅 cell_bypass_mode="residual" 时生效; "none"/"cat" 不实例化此参数.
+    extra_cell_dim : int
+        Phase 4.2 B4 dual encoder 的附加 cell 通道维度 (默认 0):
+        * 0 (默认): 无附加通道, 行为与 Phase 6 / B1-B3 完全一致.
+        * >0: fusion 时在 cell_repr 之后追加 extra_cell_emb (B, extra_cell_dim),
+          forward 必须传 extra_cell_emb. GDGNModel dual_cell=True 时 = 256
+          (SimpleCellEncoder flatten 路径 drug-agnostic 嵌入).
 
     Phase 4.2 兼容性:
-    - cell_bypass_mode="none" (默认) 不实例化 bypass_proj/modulation_alpha →
+    - cell_bypass_mode="none" + extra_cell_dim=0 (默认) 不实例化任何新参数 →
       state_dict 键集与 Phase 6 完全一致, strict load_state_dict 通过.
     - cell_bypass_mode != "none" 时新增 bypass_proj (+ modulation_alpha for
-      residual+learnable) → 必须 strict=False 加载或全新 init (B1/B2/B3 走全新 init).
+      residual+learnable); extra_cell_dim > 0 时 fusion_dim 改变 → 均须
+      strict=False 加载或全新 init (B1/B2/B3 走全新 init, B4 全新 init).
     """
 
     def __init__(
@@ -112,6 +121,7 @@ class DrugResponsePredictor(nn.Module):
         n_query_tokens: int = 1,
         cell_bypass_mode: str = "none",
         learnable_alpha: bool = True,
+        extra_cell_dim: int = 0,
     ):
         super().__init__()
         assert proj_dim % num_heads == 0, f"proj_dim {proj_dim} must be divisible by num_heads {num_heads}"
@@ -119,6 +129,7 @@ class DrugResponsePredictor(nn.Module):
         assert n_query_tokens >= 1, f"n_query_tokens {n_query_tokens} must be >= 1"
         assert cell_bypass_mode in ("none", "residual", "cat"), \
             f"cell_bypass_mode {cell_bypass_mode!r} must be one of 'none'/'residual'/'cat'"
+        assert extra_cell_dim >= 0, f"extra_cell_dim {extra_cell_dim} must be >= 0"
         self.use_main_drug_emb = use_main_drug_emb
         self.n_query_tokens = n_query_tokens
         self.gene_dim = gene_dim
@@ -126,6 +137,7 @@ class DrugResponsePredictor(nn.Module):
         self.pathway_dim = pathway_dim
         self.cell_bypass_mode = cell_bypass_mode
         self.learnable_alpha = learnable_alpha
+        self.extra_cell_dim = extra_cell_dim
 
         # n_query_tokens=1 时与原行为严格一致 (Phase 4 ckpt 可直接 load)
         # n_query_tokens>1 时 drug_proj 输出 (B, proj_dim * n_query) 后 reshape 成 (B, n_query, proj_dim)
@@ -154,15 +166,16 @@ class DrugResponsePredictor(nn.Module):
         #    "none":     cell_dim = proj_dim * n_query                  (= Phase 6)
         #    "residual": cell_dim = n_query * proj_dim (与 attended 相同, 仅新增 bypass_proj 参数)
         #    "cat":      cell_dim = gene_dim + n_query * proj_dim        (显式双通道)
+        # B4 dual encoder: extra_cell_dim > 0 时再追加 flatten 通道维度.
         if cell_bypass_mode == "cat":
             cell_dim = gene_dim + n_query_tokens * proj_dim
         else:  # "none" or "residual"
             cell_dim = n_query_tokens * proj_dim
         if use_main_drug_emb:
             self.main_drug_proj = nn.Linear(gene_dim, drug_dim)
-            fusion_dim = cell_dim + drug_dim + drug_dim + pathway_dim
+            fusion_dim = cell_dim + extra_cell_dim + drug_dim + drug_dim + pathway_dim
         else:
-            fusion_dim = cell_dim + drug_dim + pathway_dim
+            fusion_dim = cell_dim + extra_cell_dim + drug_dim + pathway_dim
         self.fusion_dim = fusion_dim
 
         self.cross_attn = nn.MultiheadAttention(
@@ -188,6 +201,7 @@ class DrugResponsePredictor(nn.Module):
         pathway_emb: torch.Tensor,
         main_drug_emb: torch.Tensor | None = None,
         drug_idx: torch.Tensor | None = None,
+        extra_cell_emb: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Parameters
@@ -197,6 +211,9 @@ class DrugResponsePredictor(nn.Module):
         pathway_emb : (B, pathway_dim)
         main_drug_emb : (B, N_drug, gene_dim) | None  主图 drug 节点嵌入 (Phase 6 ablation)
         drug_idx : (B,) LongTensor | None             指明 batch 内每样本对应主图哪个 drug
+        extra_cell_emb : (B, extra_cell_dim) | None
+            B4 dual encoder 附加 cell 通道 (SimpleCellEncoder flatten 嵌入,
+            drug-agnostic). 仅 extra_cell_dim > 0 时消费; 否则必须为 None.
 
         Returns
         -------
@@ -236,7 +253,15 @@ class DrugResponsePredictor(nn.Module):
             else:  # "cat"
                 cell_repr = torch.cat([bypass, attended_genes], dim=-1)  # (B, gene_dim + n_query*proj_dim)
 
-        parts = [cell_repr, drug_emb, pathway_emb]
+        parts = [cell_repr]
+        if self.extra_cell_dim > 0:
+            # Phase 4.2 B4 dual encoder: 追加 SimpleCellEncoder flatten 通道.
+            assert extra_cell_emb is not None, \
+                "extra_cell_dim > 0 requires extra_cell_emb (B4 dual encoder path)"
+            assert extra_cell_emb.size(1) == self.extra_cell_dim, \
+                f"extra_cell_emb dim {extra_cell_emb.size(1)} != extra_cell_dim {self.extra_cell_dim}"
+            parts.append(extra_cell_emb)
+        parts += [drug_emb, pathway_emb]
         if self.use_main_drug_emb:
             assert main_drug_emb is not None and drug_idx is not None, \
                 "use_main_drug_emb=True requires main_drug_emb + drug_idx"
@@ -355,6 +380,41 @@ def _smoke_test() -> None:
     # cell_dim = 256+512 = 768; fusion_dim = 768+128+64 = 960
     _test_bypass("cat", 2, True,
                  expect_bypass_extra_keys=True, expect_residual_alpha=False, expect_fusion_dim=960)
+
+    # --- Phase 4.2 B4 dual encoder: extra_cell_dim 测试 -----------------------
+    # 详见 [Phase4.2架构改造规划.md] §5.4 + 本文件 extra_cell_dim 文档.
+    # B4 = residual + extra_cell_dim=256 (SimpleCellEncoder flatten 通道):
+    #   cell_dim = 256 (bypass + alpha*attended), fusion_dim = 256+256+128+64 = 704
+    extra_emb = torch.randn(B, 256, device=device)
+    m_extra = DrugResponsePredictor(
+        use_main_drug_emb=False, cell_bypass_mode="residual",
+        learnable_alpha=True, extra_cell_dim=256,
+    ).to(device)
+    assert m_extra.fusion_dim == 704, f"B4 fusion_dim {m_extra.fusion_dim} != 704"
+    m_extra.train()
+    out_extra, attn_extra = m_extra(gene_emb, drug_emb, pathway_emb, extra_cell_emb=extra_emb)
+    assert out_extra.shape == (B, 1) and attn_extra.shape == (B, 1, N_gene)
+    assert torch.isfinite(out_extra).all() and torch.isfinite(attn_extra).all()
+    loss_extra = out_extra.sum()
+    loss_extra.backward()
+    n_grad_extra = sum(1 for p in m_extra.parameters() if p.grad is not None and p.requires_grad)
+    n_total_extra = sum(1 for _ in m_extra.parameters())
+    assert n_grad_extra == n_total_extra, f"B4 only {n_grad_extra}/{n_total_extra} params have grad"
+    n_p_extra = sum(p.numel() for p in m_extra.parameters())
+    print(f"[smoke] B4 extra_cell_dim=256 (residual) OK "
+          f"| fusion_dim={m_extra.fusion_dim} params={n_p_extra:,} "
+          f"| (expect ~576K = B3 head 尺寸, extra 通道无新增 predictor 参数)")
+    m_extra.zero_grad(set_to_none=True)
+    # extra_cell_dim>0 但不传 extra_cell_emb 必须显式报错 (防静默静默降级)
+    try:
+        m_extra(gene_emb, drug_emb, pathway_emb)
+        raise AssertionError("B4: missing extra_cell_emb should raise")
+    except AssertionError:
+        pass
+    print("[smoke] B4 missing extra_cell_emb correctly raises AssertionError")
+
+    # extra_cell_dim=0 (默认) 时 extra_cell_emb 不消费: 与 Phase 6 行为一致已由
+    # _test_bypass("none", ...) 覆盖; 再显式验证 none+extra=0 的 strict 键集兼容.
 
     # --- Phase 4.2 ∩ Phase 6 ckpt 严格兼容性校验 ---------------------------
     # cell_bypass_mode="none" 必须产生与 Phase 6 predictor 严格一致的 state_dict 键集

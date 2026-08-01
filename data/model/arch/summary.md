@@ -1,11 +1,11 @@
 # Phase 4.2 架构改造跨变体对比 summary
 
 > **实施分支**:`feature/phase4.2-arch-bypass-cell-crossattn`
-> **本批范围**:B1 bypass_residual / B2 bypass_arch / B3 bypass_cat(B4/B5/B6 暂缓,plan §10.4)
+> **本批范围**:B1 bypass_residual / B2 bypass_arch / B3 bypass_cat / B4 dual_encoder
 > **对照文档**:[Phase4.2架构改造规划.md](../../guidance/Phase4.2架构改造规划.md) §1.1 / §8.3、
 >   [data/model/ablation/summary.md](../ablation/summary.md)(Phase 6 已测结果)
-> **状态**:B1 / B3 已完成并回填;B2 未跑(§8.4 判定 bypass 路线未达 bar,扩容无诊断价值);B4/B5/B6 暂缓。
-> **回填日期**:2026-08-01(B1 / B3 实测回填)
+> **状态**:B1 / B3 / B4 已完成并回填;B2 未跑(§8.4 判定 bypass 路线未达 bar,扩容无诊断价值);B5/B6 暂缓。
+> **回填日期**:2026-08-01(B1 / B3 实测回填 + B4 实测回填)
 
 ---
 
@@ -24,7 +24,7 @@
 | **B1** | 0.9262 | 0.9232 | 0.7111 | 0.7282 | 0.9323 | 0.0889 | head ~510K (总 ~1.84M) | residual + n_q=1 + learnable_alpha=True + pretrain=null | LODO +0.017 vs A4, 未达 A4+0.02 bar; LOCO/7无DTI 微升 |
 | **B2** | – | – | – | – | – | – | head ~1.46M (总 ~2.79M) | residual + n_q=4 + hidden=512 + pretrain=null | **未跑**(bypass 路线未达标, 扩容无优先) |
 | **B3** | 0.9212 | 0.9175 | 0.6825 | 0.7031 | 0.9257 | 0.1083 | head ~576K (总 ~1.91M) | cat + n_q=1 + pretrain=null | LODO −0.012 vs A4, cat 显式双通反而更差 |
-| B4 | – | – | – | – | – | – | head ~510K + dual enc ~2.3M | dual_cell(暂缓) | **暂缓**(plan §10.4, 待 B1/B3 决定) |
+| **B4** | 0.9361 | **0.9354** | **0.7784** | **0.7895** | **0.9484** | **0.0782** | head ~577K + flatten enc ~17.5M (总 ~19.3M) | dual_cell=True + residual + n_q=1 + pretrain=null | GDGN 历史最佳 (LODO +0.084 vs A4, +0.067 vs B1), test PCC ≥0.93 达标; 未达 0.80 追平 baseline bar (差 0.037) |
 | B5 | – | – | – | – | – | – | head ~510K | B1 + cross-attn dropout=0.5(暂缓) | **暂缓** |
 | B6 | – | – | – | – | – | – | head ~535K | bypass_gate(暂缓) | **暂缓** |
 
@@ -42,6 +42,9 @@
 | B1 | L1 | residual | 1 | 256 | bypass(gene mean pool)主 + cross-attn 残差调制, learnable_alpha 从 1.0 起步 | LODO 0.75-0.78, BP > A4 + 0.05 |
 | B2 | L1+扩容 | residual | 4 | 512 | B1 基础扩容 (n_q=4 + MLP 加宽); bypass_proj 输出 = 1024, attended_genes = 1024 对齐残差和 | LODO 0.76-0.80, paired PCC > 0.93 |
 | B3 | L2 | cat | 1 | 256 | 显式双通 cell_repr=cat([bypass 256, attended 256])=512, fusion=704 | LODO 0.78-0.82, 更接近 baseline |
+| B4 | L3 | dual_cell + residual | 1 | 256 | GDGN 图路径 (bypass+α·attended 256) ‖ baseline 原版 SimpleCellEncoder flatten 路径 (drug-agnostic 256, ~17.5M), cell=512, fusion=704 | LODO 0.80-0.85, LOCO > 0.95 |
+
+> ⚠️ **B4 参数量修正** (2026-08-01): plan §4.4 预估 flatten 路径 ~2.3M 有误;`SimpleCellEncoder` 首层 `Linear(33834, 512)` 即 17.3M (33834 = 8412×4+186), 原样复制后 B4 总参数 ~19.3M (baseline 本身亦 ~17.7M)。训练瓶颈仍在 GDGN per-cell GNN, 耗时与 B1 相当 (~12-15h)。
 
 详细设计见 [Phase4.2架构改造规划.md](../../guidance/Phase4.2架构改造规划.md) §4.1 §4.4 §5.1 §5.2 §5.3。
 
@@ -55,10 +58,18 @@
 |---|---|---|---|
 | B1 > A4 + 0.05 | B1 LODO = **0.7111** < 0.7443 ✗ | bypass + residual 路线有效 | 不触发 |
 | B3 > B1 | B3 0.6825 < B1 0.7111 ✗ | cat 双通更好 | 不触发 |
-| B1 ≈ B3 < A4 + 0.02 | B1 = A4+0.017, B3 = A4−0.012 ✅ | **bypass 思路(mean-pool 主路径)无效** | **触发 → 实施 B4 dual encoder**(复制 baseline flatten 路径) |
+| B1 ≈ B3 < A4 + 0.02 | B1 = A4+0.017, B3 = A4−0.012 ✅ | **bypass 思路(mean-pool 主路径)无效** | **已触发 → B4 已实施并跑完 (2026-08-01)** |
 | B2 > B1 + 0.03 | B2 未跑 | 扩容有效 | 不跑(B1 未达 bar, 扩容无诊断价值) |
 | B2 ≈ B1 | B2 未跑 | 扩容无效, bypass 是瓶颈主因 | 不跑 |
 | 所有 B1-B3 LODO < 0.70 | max(B1,B2,B3) LODO = **0.7111** > 0.70 | 架构改造失败 | 未触发; 若 B4 仍 < 0.70 再转 Phase 8(K/V 角色互换) |
+
+**B4 判定锚回填** (plan §5.4 / §8.4):
+
+| 锚 | 实测 | 判定 |
+|---|---|---|
+| LODO mean > 0.80 | B4 = **0.7784** ✗ | 追平 baseline 未成功 (差 baseline 0.8154 约 0.037) |
+| LOCO mean < 0.92 | B4 = **0.9484** ✅ (> 0.92) | L3 路径未因 dual 退化 LOCO |
+| LODO < 0.70 | B4 = 0.7784 > 0.70 | 架构改造未判死, 暂不转 Phase 8 |
 
 **附加观察**(B1 vs B4 起步依据):
 - paired test PCC 双双 < 0.93(B1 0.9232 / B3 0.9175):降级 cross-attn 调制也牺牲了已见 drug 的 overall fit → cross-attn 在已见 drug 上仍有真实贡献,**应保留作增强通道**,而非砍掉 → 指向 L3 dual encoder 方案
@@ -68,8 +79,15 @@
 ### 3.1 结论与下一步
 
 1. **B1/B3 判定:bypass(mean-pool 主路径)思路无效** — B1 仅 +0.017、B3 −0.012,均未达 A4+0.02 bar,更距 baseline 0.8154 甚远
-2. **下一步:实施 B4 dual encoder**(plan §5.4 / §10.4):GDGN 图路径 + `SimpleCellEncoder` flatten 路径并行 cat(总 ~5.0M),直接复制 baseline 的 drug-agnostic cell 优势
-3. B4 预期 LODO 0.80-0.85,判定:> 0.80 追平 baseline 成功;< 0.70 放弃 L3,转 Phase 8(K/V 角色互换)
+2. **B4 判定:L3 dual encoder 部分有效但未追平 baseline** — LODO 0.7784(+0.084 vs A4,GDGN 历史最佳),test PCC 0.9354 达标(≥0.93),LOCO 0.9484 无退化;但仍差 baseline LODO 0.8154 约 0.037,未达 0.80 追平 bar
+3. 附加观察:
+   - B4 是首个 test PCC ≥ 0.93 的 GDGN 变体 → flatten 主通道恢复了已见 drug 的 overall fit,印证 cross-attn 图路径在已见 drug 上不如 flatten
+   - B4 LODO std 0.0782 进一步收窄 (A4 0.0996 / B1 0.0889) → dual 结构 drug 泛化更稳
+   - 7 无 DTI pooled PCC 0.9134 (B1 0.8910 / A4 0.8833) → 弱 drug 侧同样受益
+4. **下一步选项**:
+   - **弃 GDGN,回归 baseline**(LODO 0.8154 仍领先, 且 B4 参数量 ~19.3M ≈ baseline 17.7M 但更复杂)
+   - **B4 微调**(lr_encoder 扫描 / 更长训练)尝试再挤 ~0.04 LODO
+   - **Phase 8**(K/V 角色互换:gene 当 query 去查 drug)作为最后的图架构尝试
 
 ---
 
@@ -78,5 +96,6 @@
 - B1: `data/model/arch/B1_bypass_residual/{final_eval_report.txt,generalization_report.txt}`
 - B2: `data/model/arch/B2_bypass_arch/{final_eval_report.txt,generalization_report.txt}`
 - B3: `data/model/arch/B3_bypass_cat/{final_eval_report.txt,generalization_report.txt}`
+- B4: `data/model/arch/B4_dual_encoder/{final_eval_report.txt,generalization_report.txt}`
 
 Phase 6 对照:`data/model/ablation/summary.md`(已回填 A0/A1/A4/A5/Baseline + 辅助指标)。

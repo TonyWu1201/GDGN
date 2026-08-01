@@ -94,6 +94,28 @@ def main():
     assert ng_h_b == nh_b, f"baseline head only {ng_h_b}/{nh_b} have grad"
     assert ng_e_b == ne_b, f"baseline encoder only {ng_e_b}/{ne_b} have grad"
 
+    print("[smoke] === Path D: GDGNModel dual_cell=True (B4 dual encoder) ===")
+    model_d = GDGNModel(hetero=hetero, pretrain_ckpt=None, device=device, freeze_encoder=False,
+                        cell_bypass_mode="residual", learnable_alpha=True, dual_cell=True).to(device)
+    n_enc_d = sum(p.numel() for p in model_d.encoder_parameters())
+    n_head_d = sum(p.numel() for p in model_d.head_parameters())
+    n_flatten_d = sum(p.numel() for p in model_d.flatten_cell_enc.parameters())
+    assert model_d.predictor.fusion_dim == 704, \
+        f"dual_cell fusion_dim {model_d.predictor.fusion_dim} != 704"
+    print(f"[smoke] gdgn dual_cell encoder={n_enc_d:,} (flatten_cell_enc={n_flatten_d:,}) "
+          f"head={n_head_d:,} fusion_dim={model_d.predictor.fusion_dim}")
+    ic50_d, ne_d, ng_eD, nh_d, ng_hD = _forward_backward(model_d, cell_idx, drug_idx, omics, "gdgn-D", True)
+    print(f"[smoke] gdgn-D forward OK: ic50={tuple(ic50_d.shape)} mean={ic50_d.mean():.4f}")
+    print(f"[smoke] gdgn-D grad: encoder {ng_eD}/{ne_d} (M2 know, proj_drug 死分支), "
+          f"head {ng_hD}/{nh_d}, flatten 全梯度见 gdgn_model.py smoke")
+    assert ng_hD == nh_d, f"gdgn-D head only {ng_hD}/{nh_d} have grad"
+    n_grad_flatten_d = sum(
+        1 for p in model_d.flatten_cell_enc.parameters()
+        if p.grad is not None and p.requires_grad)
+    n_total_flatten_d = sum(1 for _ in model_d.flatten_cell_enc.parameters())
+    assert n_grad_flatten_d == n_total_flatten_d, \
+        f"gdgn-D flatten_cell_enc only {n_grad_flatten_d}/{n_total_flatten_d} have grad"
+
     print("[smoke] === ckpt save + reload ===")
     tmp_dir = Path("data/model/gdgn")
     tmp_dir.mkdir(parents=True, exist_ok=True)
