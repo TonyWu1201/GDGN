@@ -32,8 +32,17 @@ class PretrainCellSampler:
     shuffle : bool
     """
 
-    def __init__(self, n_cells: int = 404, batch_condition: int = 16, seed: int = 42, shuffle: bool = True):
-        self.n_cells = int(n_cells)
+    def __init__(
+        self, n_cells: int = 404, batch_condition: int = 16, seed: int = 42,
+        shuffle: bool = True, cell_indices: list[int] | np.ndarray | None = None,
+    ):
+        self.indices = (
+            np.arange(int(n_cells), dtype=np.int64)
+            if cell_indices is None else np.asarray(cell_indices, dtype=np.int64)
+        )
+        if self.indices.size == 0 or len(np.unique(self.indices)) != len(self.indices):
+            raise ValueError("cell_indices must be nonempty and unique")
+        self.n_cells = int(len(self.indices))
         self.batch_condition = int(batch_condition)
         self.seed = int(seed)
         self.shuffle = bool(shuffle)
@@ -45,9 +54,9 @@ class PretrainCellSampler:
     def __iter__(self):
         rng = np.random.default_rng(self.seed + self._epoch)
         if self.shuffle:
-            idx = rng.permutation(self.n_cells)
+            idx = rng.permutation(self.indices)
         else:
-            idx = np.arange(self.n_cells)
+            idx = self.indices.copy()
         for i in range(0, self.n_cells, self.batch_condition):
             yield torch.from_numpy(idx[i:i + self.batch_condition]).long()
         self._epoch += 1

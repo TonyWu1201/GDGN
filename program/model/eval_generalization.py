@@ -1,19 +1,17 @@
 """
-Phase 6 Step: 泛化测试 eval_generalization.py
+Legacy grouped evaluation (not strict LODO/LOCO)
 ==================================================
 
-设计依据: Phase 6 计划 (LODO/LOCO 真泛化口径), Phase 4 完成总结 §9.4, Phase 1
-已备 `data/processed/ldo_splits.pt` / `lco_splits.pt`.
+This script applies a checkpoint trained with the random sample-pair split to
+the complete response pool and groups its predictions. It does not retrain a
+model after holding entities out, so its outputs are descriptive grouped
+performance only. Use `program/run_strict_experiment.py` for Ver2 LDO/LCO.
 
 职责
 ----
-- **纯推理**: 用已训好的 ckpt (gdgn / baseline_simple) 在 LODO / LOCO 留出集上
-  评估, 不会重新训练 (此前的 ckpt 训练用的是配对随机分 80/10/10, 同 cell/drug
-  会同时出现在 train/val/test, 无法衡量"未见 cell/drug"的真泛化).
-- LODO (Leave-One-Drug-Out): 184 折, 每折留出一个 drug_idx 的所有样本对做 test,
-  其余做 train (本脚本仅用 test 集). 用于衡量**未见药物**的泛化.
-- LOCO (Leave-One-Cancer-Out): 35 折, 每折留出一种 cancer type 的所有细胞系
-  的所有样本对做 test. 用于衡量**未见癌症类型**的泛化.
+- **纯推理**: 用随机样本对训练的 ckpt 在完整池上预测，再按药物或癌种分组。
+- 历史 `ldo_splits.pt` / `lco_splits.pt` 在这里仅充当分组索引；训练阶段没有留出实体。
+- 因此所有输出只能称为 pooled grouped evaluation，不能衡量未见实体泛化。
 
 机制
 ----
@@ -301,12 +299,11 @@ def _render_report(
 
     rows.append("")
     rows.append("[Note] 数据泄漏口径说明:")
-    rows.append("  - 这是 Phase 6 真泛化口径: 每折留出一个未见药物 (LODO) 或未见癌症类型 (LOCO).")
+    rows.append("  - 这是历史全样本池分组口径，不是严格 LODO/LOCO；模型训练阶段见过这些实体。")
     rows.append("  - 与 Phase 4 final_eval_report.txt 中 paired random split 不同:")
     rows.append("    Phase 4 的 cell/drug 同时出现在 train/val/test, 评估已见 cell/drug 新组合.")
     rows.append("  - 本评估**纯推理**, 不重训; 用 Phase 4 已训 ckpt 直接在留出集上算指标.")
-    rows.append("  - 若 LODO/LOCO PCC 显著低于 Phase 4 paired-split PCC, 说明模型对未见 cell/drug")
-    rows.append("    的泛化能力有限 (这正是 GDGN 图架构应优于 baseline 的口径).")
+    rows.append("  - 这些分组差异只描述实体条件下的表现，不能作为冷启动证据。")
 
     for kind, payload in per_kind.items():
         fold_label = "Leave-One-Drug-Out (LODO)" if kind == "lodo" else "Leave-One-Cancer-Out (LOCO)"
@@ -375,7 +372,7 @@ def evaluate_generalization(
     batch_size: int,
     smoke: bool = False,
 ) -> dict:
-    """对 LODO / LOCO 做纯推理评估. 不重训.
+    """按历史 LODO/LOCO 索引做全池分组推理；不重训，不代表严格泛化。
 
     Parameters
     ----------
@@ -481,12 +478,12 @@ def evaluate_generalization(
         per_kind=per_kind,
         total_infer_sec=infer_sec,
     )
-    report_path = output_dir / "generalization_report.txt"
+    report_path = output_dir / "grouped_evaluation_report.txt"
     report_path.write_text(report_text, encoding="utf-8")
     print(f"[gen] report -> {report_path}")
 
     # 机读 JSON
-    json_path = output_dir / "generalization_report.json"
+    json_path = output_dir / "grouped_evaluation_report.json"
     json_path.write_text(json.dumps({
         "model": model_name,
         "ckpt": ckpt_path,

@@ -1,0 +1,10 @@
+protocols: [eval-lco, eval-ldo-kt, eval-ldo-so, eval-db]
+models: [model-m0]
+folds: [0, 1, 2, 3, 4]
+seeds: [42, 3407, 8128]
+variants:
+  expression: {modalities: [expression]}
+  expression-methylation: {modalities: [expression, methylation]}
+  expression-pathway: {modalities: [expression, pathway_activity]}
+  expression-methylation-pathway: {modalities: [expression, methylation, pathway_activity]}
+  all-omics: {modalities: [expression, mutation, copynumber, methylation, pathway_activity]}

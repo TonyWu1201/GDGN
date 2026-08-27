@@ -130,8 +130,8 @@ def _drug_ecfp(smiles: str, n_bits: int = 1024) -> np.ndarray:
     return arr
 
 
-def build_drug_features(drug_cid_to_idx: dict) -> tuple[torch.Tensor, dict]:
-    """ECFP + 理化 -> (184, 1030) Z-score. Returns (features,DrugEcFailures)."""
+def build_drug_features(drug_cid_to_idx: dict) -> tuple[torch.Tensor, dict, dict]:
+    """Build legacy standardized features plus strict unscaled components."""
     smiles_df = pd.read_csv(SMILES_CSV)
     smiles_df["cid"] = smiles_df["cid"].astype(str)
     cid_to_smiles = dict(zip(smiles_df["cid"], smiles_df["smiles"]))
@@ -139,7 +139,8 @@ def build_drug_features(drug_cid_to_idx: dict) -> tuple[torch.Tensor, dict]:
     n_drugs = len(drug_cid_to_idx)
     # cid(str) -> drug_idx(int)
     dim = 1024 + 6
-    mat = np.zeros((n_drugs, dim), dtype=np.float32)
+    fingerprints = np.zeros((n_drugs, 1024), dtype=np.float32)
+    physicochemical = np.zeros((n_drugs, 6), dtype=np.float32)
     failures: dict[str, str] = {}
 
     for cid, idx in drug_cid_to_idx.items():
@@ -149,11 +150,13 @@ def build_drug_features(drug_cid_to_idx: dict) -> tuple[torch.Tensor, dict]:
             continue
         ecfp = _drug_ecfp(smi)
         phy = _drug_phychem(smi)
-        mat[idx] = np.concatenate([ecfp, phy])
+        fingerprints[idx] = ecfp
+        physicochemical[idx] = phy
         if ecfp.sum() == 0:
             failures[cid] = "ECFP all-zero (parse fail)"
 
     # Z-score across drugs
+    mat = np.concatenate([fingerprints, physicochemical], axis=1)
     mu = mat.mean(axis=0, keepdims=True)
     sd = mat.std(axis=0, keepdims=True)
     sd[sd == 0] = 1.0
@@ -161,7 +164,11 @@ def build_drug_features(drug_cid_to_idx: dict) -> tuple[torch.Tensor, dict]:
 
     if failures:
         print(f" [WARN] {len(failures)} drug feature failures: {[f'{k}:{v}' for k,v in failures.items()][:5]}")
-    return torch.from_numpy(mat).float(), failures
+    raw = {
+        "fingerprint": torch.from_numpy(fingerprints).float(),
+        "physicochemical": torch.from_numpy(physicochemical).float(),
+    }
+    return torch.from_numpy(mat).float(), failures, raw
 
 
 def reorganize_mol_graphs(drug_cid_to_idx: dict) -> dict:
@@ -298,8 +305,9 @@ def main():
     torch.save(gene_feat, OUT_GRAPH / "gene_static_features.pt")
 
     # 2c drug features (ECFP + physchem) + mol graphs
-    drug_feat, drug_failures = build_drug_features(cid_to_idx)
+    drug_feat, drug_failures, drug_raw = build_drug_features(cid_to_idx)
     torch.save(drug_feat, OUT_GRAPH / "drug_features.pt")
+    torch.save(drug_raw, OUT_GRAPH / "drug_features_raw.pt")
     mol_graphs = reorganize_mol_graphs(cid_to_idx)
     with open(OUT_DRUG / "drug_mol_graphs.pkl", "wb") as f:
         pickle.dump(mol_graphs, f)

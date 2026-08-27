@@ -41,7 +41,9 @@ PRETRAIN_DIR = _PROJECT_ROOT / "data" / "model" / "pretrain"
 PRETRAIN_DIR.mkdir(parents=True, exist_ok=True)
 
 HETERO_PT = MODEL_GRAPH / "hetero_graph_base.pt"
-HELDOUT_PT = PRETRAIN_DIR / "heldout_edges.pt"
+# Ver2 uses a new artifact so the legacy (leaky) split remains available only
+# as historical evidence and can never be loaded accidentally.
+HELDOUT_PT = PRETRAIN_DIR / "edge_split_strict.pt"
 
 
 def _edge_key_sym(a: np.ndarray, b: np.ndarray, n: int) -> np.ndarray:
@@ -118,16 +120,39 @@ class EdgeMaskSampler:
         dti_train_idx = dti_perm[n_dti_held:]
         self._dti_train_idx = np.sort(dti_train_idx)
 
-        ppi_pos = self.ppi_unique[:, ppi_held_idx]
-        ppi_neg = self._sample_ppi_negatives(n_ppi_held * neg_ratio)
-        dti_pos = self.dti_edges[:, dti_held_idx]
-        dti_neg = self._sample_dti_negatives(n_dti_held * neg_ratio)
+        # Validation selects checkpoints; test is untouched until final verification.
+        # Both sets are absent from every message-passing graph.
+        ppi_cut = max(1, len(ppi_held_idx) // 2)
+        dti_cut = max(1, len(dti_held_idx) // 2)
+        ppi_val_idx, ppi_test_idx = ppi_held_idx[:ppi_cut], ppi_held_idx[ppi_cut:]
+        dti_val_idx, dti_test_idx = dti_held_idx[:dti_cut], dti_held_idx[dti_cut:]
+        if ppi_test_idx.size == 0:
+            ppi_test_idx = ppi_val_idx.copy()
+        if dti_test_idx.size == 0:
+            dti_test_idx = dti_val_idx.copy()
+
+        ppi_val_pos = self.ppi_unique[:, ppi_val_idx]
+        ppi_test_pos = self.ppi_unique[:, ppi_test_idx]
+        dti_val_pos = self.dti_edges[:, dti_val_idx]
+        dti_test_pos = self.dti_edges[:, dti_test_idx]
 
         heldout = {
-            "ppi_pos": torch.from_numpy(ppi_pos).long(),
-            "ppi_neg": torch.from_numpy(ppi_neg).long(),
-            "dti_pos": torch.from_numpy(dti_pos).long(),
-            "dti_neg": torch.from_numpy(dti_neg).long(),
+            "ppi_val_pos": torch.from_numpy(ppi_val_pos).long(),
+            "ppi_val_neg": torch.from_numpy(
+                self._sample_ppi_negatives(ppi_val_pos.shape[1] * neg_ratio)
+            ).long(),
+            "ppi_test_pos": torch.from_numpy(ppi_test_pos).long(),
+            "ppi_test_neg": torch.from_numpy(
+                self._sample_ppi_negatives(ppi_test_pos.shape[1] * neg_ratio)
+            ).long(),
+            "dti_val_pos": torch.from_numpy(dti_val_pos).long(),
+            "dti_val_neg": torch.from_numpy(
+                self._sample_dti_negatives(dti_val_pos.shape[1] * neg_ratio)
+            ).long(),
+            "dti_test_pos": torch.from_numpy(dti_test_pos).long(),
+            "dti_test_neg": torch.from_numpy(
+                self._sample_dti_negatives(dti_test_pos.shape[1] * neg_ratio)
+            ).long(),
             "ppi_train_idx": torch.from_numpy(ppi_train_idx).long(),
             "dti_train_idx": torch.from_numpy(dti_train_idx).long(),
             "meta": {
@@ -137,6 +162,12 @@ class EdgeMaskSampler:
                 "dti_ratio": dti_ratio,
                 "n_ppi_train": int(ppi_train_idx.shape[0]),
                 "n_dti_train": int(dti_train_idx.shape[0]),
+                "n_ppi_val": int(ppi_val_pos.shape[1]),
+                "n_ppi_test": int(ppi_test_pos.shape[1]),
+                "n_dti_val": int(dti_val_pos.shape[1]),
+                "n_dti_test": int(dti_test_pos.shape[1]),
+                "seed": int(getattr(cfg, "seed", 42)),
+                "strict_message_graph": True,
             },
         }
         return heldout
@@ -144,7 +175,9 @@ class EdgeMaskSampler:
     def load_or_build_heldout(self, path: Path = HELDOUT_PT, rebuild: bool = False) -> dict:
         if path.exists() and not rebuild:
             obj = torch.load(path, weights_only=False)
-            if "ppi_train_idx" not in obj or "dti_train_idx" not in obj:
+            required = {"ppi_train_idx", "dti_train_idx", "ppi_val_pos", "ppi_test_pos",
+                        "dti_val_pos", "dti_test_pos"}
+            if not required.issubset(obj):
                 rebuild = True
             else:
                 self._ppi_train_idx = obj["ppi_train_idx"].numpy()
@@ -158,43 +191,54 @@ class EdgeMaskSampler:
         n_samples = int(n_samples)
         if n_samples <= 0:
             return np.zeros((2, 0), dtype=np.int64)
-        collected = []
-        needed = n_samples
+        collected: dict[int, tuple[int, int]] = {}
         nG = self.n_genes
-        while needed > 0:
-            cand = self.rng.integers(0, nG, size=(needed * 3, 2))
+        while len(collected) < n_samples:
+            needed = n_samples - len(collected)
+            cand = self.rng.integers(0, nG, size=(max(needed * 3, 64), 2))
             cand = cand[cand[:, 0] != cand[:, 1]]
             if cand.shape[0] == 0:
                 continue
             keys = _edge_key_sym(cand[:, 0], cand[:, 1], nG)
             keep = ~np.isin(keys, self.ppi_full_keys)
-            kept = cand[keep][:needed]
-            collected.append(kept)
-            needed -= kept.shape[0]
-        out = np.concatenate(collected, axis=0)[:n_samples]
+            for row, key in zip(cand[keep], keys[keep]):
+                lo, hi = sorted((int(row[0]), int(row[1])))
+                collected.setdefault(int(key), (lo, hi))
+                if len(collected) == n_samples:
+                    break
+        out = np.asarray(list(collected.values()), dtype=np.int64)
         return out.T.astype(np.int64)
 
     def _sample_dti_negatives(self, n_samples: int) -> np.ndarray:
         n_samples = int(n_samples)
         if n_samples <= 0:
             return np.zeros((2, 0), dtype=np.int64)
-        collected_drug = []
-        collected_gene = []
-        needed = n_samples
+        collected: dict[int, tuple[int, int]] = {}
         nG = self.n_genes
-        while needed > 0:
-            drugs = self.rng.choice(self.drug_idx_with_dti, size=needed * 3)
-            genes = self.rng.integers(0, nG, size=needed * 3)
+        while len(collected) < n_samples:
+            needed = n_samples - len(collected)
+            drugs = self.rng.choice(self.drug_idx_with_dti, size=max(needed * 3, 64))
+            genes = self.rng.integers(0, nG, size=max(needed * 3, 64))
             keys = _edge_key_asym(drugs, genes, nG)
             keep = ~np.isin(keys, self.dti_full_keys)
-            kept_d = drugs[keep][:needed]
-            kept_g = genes[keep][:needed]
-            collected_drug.append(kept_d)
-            collected_gene.append(kept_g)
-            needed -= kept_d.shape[0]
-        d = np.concatenate(collected_drug, axis=0)[:n_samples]
-        g = np.concatenate(collected_gene, axis=0)[:n_samples]
+            for drug, gene, key in zip(drugs[keep], genes[keep], keys[keep]):
+                collected.setdefault(int(key), (int(drug), int(gene)))
+                if len(collected) == n_samples:
+                    break
+        pairs = np.asarray(list(collected.values()), dtype=np.int64)
+        d, g = pairs[:, 0], pairs[:, 1]
         return np.stack([d, g], axis=0).astype(np.int64)
+
+    def training_message_edges(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return only training-positive edges for leakage-free message passing."""
+        self._assert_heldout_exists()
+        ppi = self.ppi_unique[:, self._ppi_train_idx]
+        dti = self.dti_edges[:, self._dti_train_idx]
+        ppi_fwd = torch.from_numpy(ppi).long()
+        ppi_rev = torch.from_numpy(np.stack([ppi[1], ppi[0]], axis=0)).long()
+        dti_fwd = torch.from_numpy(dti).long()
+        dti_rev = torch.from_numpy(np.stack([dti[1], dti[0]], axis=0)).long()
+        return ppi_fwd, ppi_rev, dti_fwd, dti_rev
 
     def sample_ppi(self, mask_ratio: float | None = None, neg_ratio: float | None = None) -> dict:
         self._assert_heldout_exists()
@@ -252,12 +296,14 @@ class EdgeMaskSampler:
             "neg": torch.from_numpy(neg).long(),
         }
 
-    def heldout_negatives(self, heldout: dict) -> tuple[torch.Tensor, torch.Tensor]:
-        h_keys = _edge_key_sym(heldout["ppi_neg"][0].numpy(), heldout["ppi_neg"][1].numpy(), self.n_genes)
-        d_keys = _edge_key_asym(heldout["dti_neg"][0].numpy(), heldout["dti_neg"][1].numpy(), self.n_genes)
+    def heldout_negatives(self, heldout: dict, split: str = "val") -> tuple[torch.Tensor, torch.Tensor]:
+        h = heldout[f"ppi_{split}_neg"]
+        d = heldout[f"dti_{split}_neg"]
+        h_keys = _edge_key_sym(h[0].numpy(), h[1].numpy(), self.n_genes)
+        d_keys = _edge_key_asym(d[0].numpy(), d[1].numpy(), self.n_genes)
         assert (~np.isin(h_keys, self.ppi_full_keys)).all(), "held-out ppi negatives must not be true edges"
         assert (~np.isin(d_keys, self.dti_full_keys)).all(), "held-out dti negatives must not be true edges"
-        return heldout["ppi_neg"], heldout["dti_neg"]
+        return h, d
 
 
 def _make_cfg(**kw):
@@ -286,13 +332,13 @@ def _smoke_test() -> None:
     heldout = sampler.load_or_build_heldout(heldout_path, rebuild=rebuild)
     meta = heldout["meta"]
     print(f"[smoke] heldout meta: {json.dumps(meta)}")
-    print(f"[smoke] heldout shapes: ppi_pos={tuple(heldout['ppi_pos'].shape)} ppi_neg={tuple(heldout['ppi_neg'].shape)} "
-          f"dti_pos={tuple(heldout['dti_pos'].shape)} dti_neg={tuple(heldout['dti_neg'].shape)}")
+    print(f"[smoke] heldout shapes: ppi_val={tuple(heldout['ppi_val_pos'].shape)} "
+          f"ppi_test={tuple(heldout['ppi_test_pos'].shape)} dti_val={tuple(heldout['dti_val_pos'].shape)} "
+          f"dti_test={tuple(heldout['dti_test_pos'].shape)}")
 
-    assert heldout["ppi_pos"].shape[0] == 2 and heldout["dti_pos"].shape[0] == 2
-    assert int(heldout["ppi_pos"].min()) >= 0 and int(heldout["ppi_pos"].max()) < sampler.n_genes
-    assert int(heldout["dti_pos"][0].min()) >= 0 and int(heldout["dti_pos"][0].max()) < sampler.n_drugs
-    assert int(heldout["dti_pos"][1].min()) >= 0 and int(heldout["dti_pos"][1].max()) < sampler.n_genes
+    for split in ("val", "test"):
+        assert heldout[f"ppi_{split}_pos"].shape[0] == 2
+        assert heldout[f"dti_{split}_pos"].shape[0] == 2
 
     ppi = sampler.sample_ppi()
     print(f"[smoke] ppi: vis_fwd={tuple(ppi['visible_fwd'].shape)} vis_rev={tuple(ppi['visible_rev'].shape)} "
@@ -322,6 +368,17 @@ def _smoke_test() -> None:
     overlap_d = np.intersect1d(neg_dti_keys, sampler.dti_full_keys).size
     print(f"[smoke] dti neg overlap with full_set = {overlap_d} (should be 0)")
     assert overlap_d == 0
+
+    train_edges = sampler.training_message_edges()
+    train_ppi_keys = _edge_key_sym(train_edges[0][0].numpy(), train_edges[0][1].numpy(), sampler.n_genes)
+    train_dti_keys = _edge_key_asym(train_edges[2][0].numpy(), train_edges[2][1].numpy(), sampler.n_genes)
+    for split in ("val", "test"):
+        held_ppi_keys = _edge_key_sym(
+            heldout[f"ppi_{split}_pos"][0].numpy(), heldout[f"ppi_{split}_pos"][1].numpy(), sampler.n_genes)
+        held_dti_keys = _edge_key_asym(
+            heldout[f"dti_{split}_pos"][0].numpy(), heldout[f"dti_{split}_pos"][1].numpy(), sampler.n_genes)
+        assert np.intersect1d(train_ppi_keys, held_ppi_keys).size == 0
+        assert np.intersect1d(train_dti_keys, held_dti_keys).size == 0
 
     print("[smoke] ALL OK | edge_mask.py")
 

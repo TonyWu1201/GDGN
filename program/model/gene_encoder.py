@@ -60,9 +60,9 @@ def load_pretrained_gene_encoder(
     assert kw["hidden_dim"] == 256, (
         f"expect full-trained ckpt hidden_dim=256, got {kw['hidden_dim']}; "
         "请先按 Phase 2 §10.1 跑全量训练再启动 Phase 3")
-    assert int(ckpt.get("epoch", -1)) >= 10, (
-        f"smoke ckpt 停在 epoch<10, 实际 epoch={ckpt.get('epoch')}; "
-        "请先按 Phase 2 §10.1 跑全量训练再启动 Phase 3")
+    assert not bool(ckpt.get("cfg", {}).get("smoke", False)), (
+        "smoke checkpoint cannot initialize a formal model"
+    )
     enc = PretrainGNNEncoder(**kw).to(device)
     enc.load_state_dict(ckpt["encoder_state_dict"], strict=True)
     if freeze:

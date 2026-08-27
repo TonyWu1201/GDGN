@@ -37,21 +37,30 @@ EXPR_CSV = PROCESSED / "cell_line_omics" / "expression.csv"
 MUT_CSV = PROCESSED / "cell_line_omics" / "mutation.csv"
 CNV_CSV = PROCESSED / "cell_line_omics" / "copynumber.csv"
 METH_CSV = PROCESSED / "cell_line_omics" / "methylation.csv"
+METH_RAW_CSV = PROCESSED / "cell_line_omics" / "methylation_raw.csv"
 PW_NPY = PROCESSED / "driver&pathway" / "pathway_activity.npy"
+PW_RAW_NPY = PROCESSED / "driver&pathway" / "pathway_activity_raw.npy"
 PW_NAMES = PROCESSED / "driver&pathway" / "pathway_names.txt"
 
 CANON_PATH = PROCESSED / "cell_line_canonical_order.txt"
 CORE_PATH = DATA / "model" / "hetero_graph" / "core_gene_order.txt"
 OUT_PATH = DATA / "model" / "hetero_graph" / "cell_line_features.pt"
+RAW_OUT_PATH = DATA / "model" / "hetero_graph" / "cell_line_features_raw.pt"
 
 
-def _reindex_and_slice(df: pd.DataFrame, cell_order: list[str], gene_order: list[str]) -> pd.DataFrame:
+def _reindex_and_slice(
+    df: pd.DataFrame,
+    cell_order: list[str],
+    gene_order: list[str],
+    preserve_missing: bool = False,
+) -> pd.DataFrame:
     """Reindex rows to cell_order, slice columns by gene_order; missing cols -> 0."""
     rows = df.reindex(cell_order)
     present = set(rows.columns)
     cols_needed = [g if g in present else None for g in gene_order]
+    fill = np.nan if preserve_missing else 0.0
     out = pd.DataFrame(
-        np.zeros((len(rows), len(gene_order)), dtype=np.float32),
+        np.full((len(rows), len(gene_order)), fill, dtype=np.float32),
         index=cell_order,
         columns=gene_order,
     )
@@ -59,12 +68,12 @@ def _reindex_and_slice(df: pd.DataFrame, cell_order: list[str], gene_order: list
     filled_cols = [g for g in gene_order if g in present]
     if filled_cols:
         out[filled_cols] = rows[filled_cols].values
-    # row NaN -> 0 (cell-line level missing rows; shouldn't happen given canon subset)
-    out = out.fillna(0.0)
-    return out
+    return out if preserve_missing else out.fillna(0.0)
 
 
-def _aggregate_methylation_by_gene(meth: pd.DataFrame, gene_order: list[str]) -> pd.DataFrame:
+def _aggregate_methylation_by_gene(
+    meth: pd.DataFrame, gene_order: list[str], preserve_missing: bool = False
+) -> pd.DataFrame:
     """Methylation cols: 'GENE_chr_start_end' → mean per gene. Then slice to gene_order."""
     raw_cols = meth.columns.astype(str)
     gene_prefixes = [c.split("_")[0] for c in raw_cols]
@@ -74,17 +83,27 @@ def _aggregate_methylation_by_gene(meth: pd.DataFrame, gene_order: list[str]) ->
     # average duplicate gene columns
     grouped = df.T.groupby(level=0).mean().T
     # slice
+    fill = np.nan if preserve_missing else 0.0
     out = pd.DataFrame(
-        np.zeros((len(meth.index), len(gene_order)), dtype=np.float32),
+        np.full((len(meth.index), len(gene_order)), fill, dtype=np.float32),
         index=meth.index,
         columns=gene_order,
     )
     filled = [g for g in gene_order if g in set(grouped.columns)]
     if filled:
         out[filled] = grouped[filled].values
-    # missing CpG coverage for a gene -> 0 (already). Row NaNs from source -> 0
-    out = out.fillna(0.0)
-    return out
+    return out if preserve_missing else out.fillna(0.0)
+
+
+def _reorder_pathways(values: np.ndarray, expr_index: list[str], cell_order: list[str]) -> np.ndarray:
+    if values.shape[0] != len(expr_index):
+        raise ValueError(f"pathway row count {values.shape[0]} != expression rows {len(expr_index)}")
+    name_to_canon_pos = {name: index for index, name in enumerate(cell_order)}
+    result = np.full((len(cell_order), values.shape[1]), np.nan, dtype=np.float32)
+    for source_index, name in enumerate(expr_index):
+        if name in name_to_canon_pos:
+            result[name_to_canon_pos[name]] = values[source_index]
+    return result
 
 
 def main():
@@ -97,32 +116,36 @@ def main():
     print(" loading expression...")
     expr = pd.read_csv(EXPR_CSV, index_col=0)
     expr_s = _reindex_and_slice(expr, cell_order, gene_order)
+    expr_raw = _reindex_and_slice(expr, cell_order, gene_order, preserve_missing=True)
     print(" loading mutation...")
     mut = pd.read_csv(MUT_CSV, index_col=0)
     mut_s = _reindex_and_slice(mut, cell_order, gene_order)
     print(" loading copynumber...")
     cnv = pd.read_csv(CNV_CSV, index_col=0)
     cnv_s = _reindex_and_slice(cnv, cell_order, gene_order)
+    cnv_raw = _reindex_and_slice(cnv, cell_order, gene_order, preserve_missing=True)
     print(" loading methylation (slow)...")
-    meth = pd.read_csv(METH_CSV, index_col=0)
-    meth = meth.reindex(cell_order)
-    meth_s = _aggregate_methylation_by_gene(meth, gene_order)
+    meth_legacy = pd.read_csv(METH_CSV, index_col=0).reindex(cell_order)
+    meth_s = _aggregate_methylation_by_gene(meth_legacy, gene_order)
+    meth_path = METH_RAW_CSV if METH_RAW_CSV.exists() else METH_CSV
+    meth_raw = _aggregate_methylation_by_gene(
+        pd.read_csv(meth_path, index_col=0).reindex(cell_order),
+        gene_order,
+        preserve_missing=True,
+    )
 
     print(" loading pathway_activity...")
-    pw = np.load(PW_NPY)  # (404, 186) float32
+    pw = np.load(PW_NPY)
+    pw_path = PW_RAW_NPY if PW_RAW_NPY.exists() else PW_NPY
+    pw_raw = np.load(pw_path)
     assert pw.shape == (n_cells, 186), f"pathway shape {pw.shape} != ({n_cells}, 186)"
+    assert pw_raw.shape == (n_cells, 186), f"raw pathway shape {pw_raw.shape} != ({n_cells}, 186)"
     pw_names = PW_NAMES.read_text().splitlines()
     assert pw.shape[1] == len(pw_names), "pathway_names count mismatch"
 
-    # pathway row order follows expression.csv (verified earlier). Reorder to cell_order:
-    # pathway_activity.npy was generated by compute_ssgsea.py reading expression.csv; its row order = expression.csv index
-    expr_index = list(expr.index)  # the order of expression rows
-    name_to_canon_pos = {c: i for i, c in enumerate(cell_order)}
-    # map expr rows to canonical: build index array giving canon-row for each expr-row
-    canon_idx_of_expr = np.array([name_to_canon_pos[c] for c in expr_index], dtype=np.int64)
-    pw_reordered = np.zeros((n_cells, 186), dtype=np.float32)
-    pw_reordered[canon_idx_of_expr] = pw
-    # any unmapped cells (already asserted subset) — fill 0 expected
+    expr_index = list(expr.index)
+    pw_reordered = _reorder_pathways(pw, expr_index, cell_order)
+    pw_raw_reordered = _reorder_pathways(pw_raw, expr_index, cell_order)
 
     out = {
         "expression": torch.from_numpy(expr_s.values.astype(np.float32)),
@@ -135,8 +158,22 @@ def main():
         "pathway_names": pw_names,
     }
     torch.save(out, OUT_PATH)
+    raw_out = dict(out)
+    raw_out.update({
+        "expression": torch.from_numpy(expr_raw.values.astype(np.float32)),
+        "copynumber": torch.from_numpy(cnv_raw.values.astype(np.float32)),
+        "methylation": torch.from_numpy(meth_raw.values.astype(np.float32)),
+        "pathway_activity": torch.from_numpy(pw_raw_reordered.astype(np.float32)),
+    })
+    raw_out["preprocessing_status"] = {
+        "strict_unscaled": bool(METH_RAW_CSV.exists() and PW_RAW_NPY.exists()),
+        "methylation_source": str(meth_path.relative_to(PROJECT_ROOT)),
+        "pathway_source": str(pw_path.relative_to(PROJECT_ROOT)),
+    }
+    torch.save(raw_out, RAW_OUT_PATH)
     shapes = {k: tuple(v.shape) for k, v in out.items() if isinstance(v, torch.Tensor)}
     print(" saved:", shapes)
+    print(f" strict raw artifact: {RAW_OUT_PATH} status={raw_out['preprocessing_status']}")
     print(" done.")
 
 

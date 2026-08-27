@@ -51,6 +51,22 @@ from program.model.pretrain import omics_to_per_gene
 from program.model.baseline_simple import SimpleCellEncoder
 
 
+def initialize_gene_features(
+    original: torch.Tensor, mode: str, seed: int = 42
+) -> tuple[torch.Tensor, bool]:
+    """Return the controlled static feature tensor and whether it is trainable."""
+    if mode in {"esm-mean", "esm-parti"}:
+        return original, False
+    if mode == "esm-none":
+        return torch.zeros_like(original), False
+    if mode in {"esm-random", "esm-id"}:
+        generator = torch.Generator(device="cpu").manual_seed(seed)
+        values = torch.randn(original.shape, generator=generator)
+        values = values / original.shape[1] ** 0.5
+        return values.to(original.device), mode == "esm-id"
+    raise ValueError(f"unknown gene_feature_mode: {mode}")
+
+
 class GDGNModel(nn.Module):
     """Phase 4 整合模型: 三编码器 + DrugResponsePredictor.
 
@@ -99,6 +115,8 @@ class GDGNModel(nn.Module):
         cell_bypass_mode: str = "none",
         learnable_alpha: bool = True,
         dual_cell: bool = False,
+        gene_feature_mode: str = "esm-mean",
+        gene_feature_seed: int = 42,
     ):
         super().__init__()
         self._device = torch.device(device)
@@ -107,6 +125,7 @@ class GDGNModel(nn.Module):
         self.cell_bypass_mode = cell_bypass_mode
         self.learnable_alpha = learnable_alpha
         self.dual_cell = bool(dual_cell)
+        self.gene_feature_mode = gene_feature_mode
 
         self.gene_enc = GeneEncoder(
             hetero, pretrain_ckpt=pretrain_ckpt, device=device, freeze=freeze_encoder,
@@ -138,7 +157,16 @@ class GDGNModel(nn.Module):
             extra_cell_dim=extra_cell_dim,
         ).to(device)
 
-        self.gene_x_static = hetero["gene"].x.to(self._device)
+        original_gene_x = hetero["gene"].x.to(self._device)
+        gene_values, trainable_gene_values = initialize_gene_features(
+            original_gene_x, gene_feature_mode, gene_feature_seed
+        )
+        # esm-parti expects the caller to replace hetero['gene'].x with the
+        # cached, biologically supervised chunk-attention embedding first.
+        if trainable_gene_values:
+            self.gene_x_static = nn.Parameter(gene_values)
+        else:
+            self.register_buffer("gene_x_static", gene_values)
         self.drug_x = hetero["drug"].x.to(self._device)
         self.drug_mol_graphs = load_drug_mol_graphs()
 
@@ -196,6 +224,8 @@ class GDGNModel(nn.Module):
                  list(self.pathway_enc.parameters())
         if self.dual_cell:
             params += list(self.flatten_cell_enc.parameters())
+        if isinstance(self.gene_x_static, nn.Parameter):
+            params += [self.gene_x_static]
         return params
 
     def head_parameters(self):
@@ -220,12 +250,12 @@ def _smoke_test() -> None:
     if Path(ckpt_path).exists():
         info = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         kw = info.get("encoder_kwargs", {})
-        if int(kw.get("hidden_dim", 0)) == 256 and int(info.get("epoch", -1)) >= 10:
+        if int(kw.get("hidden_dim", 0)) == 256 and not info.get("cfg", {}).get("smoke", False):
             pretrain_ckpt = ckpt_path
             print(f"[smoke] using pretrained ckpt (epoch={info.get('epoch')}, hidden=256)")
         else:
-            print(f"[smoke] NOTE best_encoder.pt is smoke ckpt (hidden={kw.get('hidden_dim')}, "
-                  f"epoch={info.get('epoch')}); using pretrain_ckpt=None (random init) for smoke. "
+            print(f"[smoke] NOTE best_encoder.pt is incompatible/smoke (hidden={kw.get('hidden_dim')}, "
+                  f"smoke={info.get('cfg', {}).get('smoke')}); using pretrain_ckpt=None for smoke. "
                   f"Phase 4 全量训练需先重跑 Phase 2 全量 (hidden=256) 产出 ckpt.")
 
     print(f"[smoke] GDGNModel(hetero, pretrain_ckpt={pretrain_ckpt}, device={device}, freeze_encoder=False)")

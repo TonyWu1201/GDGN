@@ -1,0 +1,23 @@
+protocols: [eval-lpo, eval-lco, eval-ldo-kt, eval-ldo-so, eval-lto, eval-db]
+models:
+  - global-mean
+  - drug-mean
+  - cell-mean
+  - two-way-additive
+  - ridge
+  - elastic-net
+  - id-mlp
+  - morgan-expression-mlp
+  - morgan-multiomics-mlp
+  - baseline_simple
+  - cdr_baseline
+  - gdgn
+model_overrides:
+  gdgn:
+    pretrain_ckpt: data/model/pretrain/strict/{split_id}/fold-{fold:02d}/seed-{seed:04d}/best_encoder.pt
+    use_main_drug_emb: false
+    cell_bypass_mode: residual
+    learnable_alpha: true
+    dual_cell: true
+folds: [0, 1, 2, 3, 4]
+seeds: [42, 3407, 8128]

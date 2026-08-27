@@ -134,23 +134,19 @@ def load_ic50_matrix() -> "np.ndarray":
 
 # ---------------- 归因 forward 闭包 ----------------
 
-def build_forward_fn(model, clf, device, cell_idx: int, drug_idx: int, pathway: torch.Tensor):
-    """构造 IG 目标函数: f(omics_4 (1,8412,4)) -> ic50 (1,1).
-
-    pathway (1,186) 由闭包捕获固定; omics dict 按 omics_to_per_gene 的逆序重建,
-    三模型 ABI 一致.
-    """
+def build_forward_fn(model, clf, device, cell_idx: int, drug_idx: int):
+    """Joint IG target over omics and its derived pathway representation."""
     cell_t = torch.tensor([cell_idx], dtype=torch.long, device=device)
     drug_t = torch.tensor([drug_idx], dtype=torch.long, device=device)
-    pathway_t = pathway.detach().to(device)
 
-    def forward_fn(omics_4: torch.Tensor) -> torch.Tensor:
+    def forward_fn(omics_4: torch.Tensor, pathway_input: torch.Tensor) -> torch.Tensor:
         omics = {
             "expr": omics_4[..., 0],
             "mut": omics_4[..., 1],
             "cnv": omics_4[..., 2],
             "meth": omics_4[..., 3],
-            "pathway": pathway_t.expand(omics_4.shape[0], -1),
+            # Pathway is interpolated with expression instead of being held fixed.
+            "pathway": pathway_input,
         }
         ic50_pred, _ = model(cell_t.expand(omics_4.shape[0]), drug_t.expand(omics_4.shape[0]), omics)
         return ic50_pred  # (B,1)
@@ -160,7 +156,7 @@ def build_forward_fn(model, clf, device, cell_idx: int, drug_idx: int, pathway: 
 
 def ig_attribution(model, clf, device, cell_idx: int, drug_idx: int,
                    n_steps: int = 50, baseline: str = "mean") -> dict:
-    """IG on omics_per_gene. 返回 {'attr': (8412,4), 'per_gene': (8412,)}."""
+    """Joint IG on omics and expression-derived pathway inputs with convergence delta."""
     cell_t = torch.tensor([cell_idx], dtype=torch.long, device=device)
     omics = inject_batch_omics(clf, cell_t)
     pathway = omics["pathway"]
@@ -172,25 +168,41 @@ def ig_attribution(model, clf, device, cell_idx: int, drug_idx: int,
         baseline_4 = torch.stack([
             clf[ch_map[k]].mean(dim=0) for k in ["expr", "mut", "cnv", "meth"]
         ], dim=-1).unsqueeze(0).to(device)
+        baseline_pathway = clf["pathway_activity"].mean(dim=0, keepdim=True).to(device)
     else:
         baseline_4 = torch.zeros_like(omics_4)
+        baseline_pathway = torch.zeros_like(pathway)
 
     from captum.attr import IntegratedGradients
     model.eval()
-    with torch.no_grad():
-        for p in model.parameters():
-            p.requires_grad_(False)
+    original_requires_grad = [parameter.requires_grad for parameter in model.parameters()]
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
     # 全程 eval 模式: BN 用 running stats (可导, 且无 B=1 校验), dropout 关闭
     omics_4_in = omics_4.clone().requires_grad_(True)
     try:
-        ig = IntegratedGradients(build_forward_fn(model, clf, device, cell_idx, drug_idx, pathway))
-        attr = ig.attribute(omics_4_in, baselines=baseline_4, n_steps=n_steps,
-                            internal_batch_size=1)
+        ig = IntegratedGradients(build_forward_fn(model, clf, device, cell_idx, drug_idx))
+        (attr, pathway_attr), delta = ig.attribute(
+            (omics_4_in, pathway.clone().requires_grad_(True)),
+            baselines=(baseline_4, baseline_pathway),
+            n_steps=n_steps, internal_batch_size=1,
+            return_convergence_delta=True,
+        )
     finally:
+        for parameter, state in zip(model.parameters(), original_requires_grad):
+            parameter.requires_grad_(state)
         model.eval()
     attr = attr.detach().cpu().squeeze(0)  # (8412, 4)
     per_gene = torch.sqrt((attr ** 2).sum(dim=-1))  # (8412,)
-    return {"attr": attr, "per_gene": per_gene}
+    signed_per_gene = attr.sum(dim=-1)
+    return {
+        "attr": attr,
+        "per_gene": per_gene,
+        "signed_per_gene": signed_per_gene,
+        "pathway_attr": pathway_attr.detach().cpu().squeeze(0),
+        "convergence_delta": float(delta.detach().abs().mean().cpu()),
+        "pathway_jointly_interpolated": True,
+    }
 
 
 def attn_importance(model, clf, device, cell_idx: int, drug_idx: int) -> torch.Tensor | None:
@@ -396,6 +408,10 @@ def run_case(model, clf, device, cell_idx: int, drug_idx: int, cid: int,
         ig = ig_attribution(model, clf, device, cell_idx, drug_idx,
                             n_steps=n_steps, baseline=baseline)
         result["ig_per_gene"] = ig["per_gene"].tolist()
+        result["ig_signed_per_gene"] = ig["signed_per_gene"].tolist()
+        result["ig_pathway"] = ig["pathway_attr"].tolist()
+        result["ig_convergence_delta"] = ig["convergence_delta"]
+        result["pathway_jointly_interpolated"] = ig["pathway_jointly_interpolated"]
         result["ig_channels"] = {
             ch: ig["attr"][:, c].tolist() for c, ch in enumerate(["expr", "mut", "cnv", "meth"])
         }
@@ -490,7 +506,11 @@ def main():
     print(f"[interpret] {len(cases)} cases: " +
           ", ".join(f"(drug={d}, sens={s}, res={r})" for d, s, r in cases))
 
-    output_dir = Path(args.output_dir or f"data/model/interpretability/{args.model}")
+    default_output = (
+        f"data/model/smoke/interpretability/{args.model}" if args.smoke
+        else f"data/model/interpretability/{args.model}"
+    )
+    output_dir = Path(args.output_dir or default_output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cases_out = []
