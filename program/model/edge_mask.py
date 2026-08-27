@@ -35,6 +35,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from program.strict_eval.io import git_commit, sha256_file
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_GRAPH = PROJECT_ROOT / "data" / "model" / "hetero_graph"
 PRETRAIN_DIR = _PROJECT_ROOT / "data" / "model" / "pretrain"
@@ -168,6 +170,8 @@ class EdgeMaskSampler:
                 "n_dti_test": int(dti_test_pos.shape[1]),
                 "seed": int(getattr(cfg, "seed", 42)),
                 "strict_message_graph": True,
+                "source_graph_sha256": sha256_file(HETERO_PT),
+                "git_commit": git_commit(PROJECT_ROOT),
             },
         }
         return heldout
@@ -177,7 +181,11 @@ class EdgeMaskSampler:
             obj = torch.load(path, weights_only=False)
             required = {"ppi_train_idx", "dti_train_idx", "ppi_val_pos", "ppi_test_pos",
                         "dti_val_pos", "dti_test_pos"}
-            if not required.issubset(obj):
+            valid_meta = (
+                obj.get("meta", {}).get("strict_message_graph") is True
+                and obj.get("meta", {}).get("source_graph_sha256") == sha256_file(HETERO_PT)
+            )
+            if not required.issubset(obj) or not valid_meta:
                 rebuild = True
             else:
                 self._ppi_train_idx = obj["ppi_train_idx"].numpy()
