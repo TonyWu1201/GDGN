@@ -129,6 +129,8 @@ def build_model(model_name: str, hetero, config: dict, device) -> torch.nn.Modul
             cell_bypass_mode=config.get("cell_bypass_mode", "none"),
             learnable_alpha=config.get("learnable_alpha", True),
             dual_cell=config.get("dual_cell", False),
+            gene_feature_mode=config.get("gene_feature_mode", "esm-mean"),
+            gene_feature_seed=config.get("seed", 42),
         ).to(device)
     elif model_name == "baseline_simple":
         return BaselineSimpleModel(hetero=hetero, device=device).to(device)
@@ -336,9 +338,9 @@ def train_gdgn(config: dict, smoke: bool = False) -> dict:
             if ckpt_path.exists():
                 info = torch.load(ckpt_path, map_location="cpu", weights_only=False)
                 kw = info.get("encoder_kwargs", {})
-                if int(kw.get("hidden_dim", 0)) != 256 or int(info.get("epoch", -1)) < 10:
-                    print(f"[train] SMOKE NOTE: {ckpt_path} is smoke ckpt (hidden={kw.get('hidden_dim')}, "
-                          f"epoch={info.get('epoch')}); fallback to pretrain_ckpt=None (random init). "
+                if int(kw.get("hidden_dim", 0)) != 256 or info.get("cfg", {}).get("smoke", False):
+                    print(f"[train] SMOKE NOTE: {ckpt_path} is incompatible/smoke (hidden={kw.get('hidden_dim')}, "
+                          f"smoke={info.get('cfg', {}).get('smoke')}); fallback to pretrain_ckpt=None. "
                           f"全量训练须先重跑 Phase 2 hidden=256 ckpt.")
                     config["pretrain_ckpt"] = None
             else:
@@ -673,7 +675,7 @@ def write_final_report(
     rows.append("[Note] 数据泄漏口径:")
     rows.append("  - 主指标基于配对随机分 80/10/10 (Phase 1 sample_pairs_split.pt).")
     rows.append("  - 同一 cell / drug 会同时出现在 train/val/test, 评估的是已见 cell/drug 的新组合.")
-    rows.append("  - LODO / LOCO 是真正的泛化口径, Phase 6 单独跑 (Phase 1 已备 ldo_splits.pt / lco_splits.pt).")
+    rows.append("  - 本报告不是严格冷启动评估；严格 LCO/LDO 必须通过 Ver2 runner 对每个固定划分独立重训。")
 
     report_text = "\n".join(rows)
     report_path = output_dir / "final_eval_report.txt"
@@ -802,6 +804,8 @@ def main():
         config["max_epochs"] = 1
         config["max_steps_per_epoch"] = 2
         config["batch_size"] = 4
+        if args.output_dir is None:
+            config["output_dir"] = f"data/model/smoke/train_gdgn/{args.model}"
 
     if args.post_eval:
         # post_eval 是单进程任务, 不需要 DDP. 若用户误用 torchrun 启动, 仅让 rank 0

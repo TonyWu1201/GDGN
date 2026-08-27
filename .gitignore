@@ -23,5 +23,23 @@ data/processed/protein_protein_interaction/ppi_filtered.csv
 guidance/*
 !guidance/.gitkeep
 
+# Ver2 completion documents are part of the reproducible code release.
+!guidance/完成总结/
+guidance/完成总结/*
+!guidance/完成总结/Ver2/
+guidance/完成总结/Ver2/*
+!guidance/完成总结/Ver2/*.md
+
+# Formal experiment outputs are generated remotely and must not be committed.
+data/model/experiments/**
+!data/model/experiments/.gitkeep
+data/model/smoke/
+data/model/pretrain/smoke/
+data/model/hetero_graph/cell_line_features_raw.pt
+data/model/hetero_graph/drug_features_raw.pt
+data/processed/cell_line_omics/methylation_raw.csv
+data/processed/driver&pathway/pathway_activity_raw.npy
+data/model/audit-figures/
+
 tar_archive.ps1
 GDGN.tar.gz

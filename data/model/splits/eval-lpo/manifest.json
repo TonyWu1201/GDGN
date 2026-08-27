@@ -1,0 +1,122 @@
+{
+  "cell_group_method": "expression-pca-cosine-agglomerative",
+  "created_on": "2026-08-27",
+  "drug_group_method": "morgan-tanimoto-agglomerative",
+  "folds": [
+    {
+      "audit": {
+        "entity_overlap": {},
+        "nonempty": true,
+        "pair_overlap": {
+          "train_test": 0,
+          "train_val": 0,
+          "val_test": 0
+        },
+        "passed": true
+      },
+      "counts": {
+        "test": 13309,
+        "train": 39925,
+        "val": 13309
+      },
+      "fold": 0,
+      "n_excluded_pairs": 0
+    },
+    {
+      "audit": {
+        "entity_overlap": {},
+        "nonempty": true,
+        "pair_overlap": {
+          "train_test": 0,
+          "train_val": 0,
+          "val_test": 0
+        },
+        "passed": true
+      },
+      "counts": {
+        "test": 13309,
+        "train": 39925,
+        "val": 13309
+      },
+      "fold": 1,
+      "n_excluded_pairs": 0
+    },
+    {
+      "audit": {
+        "entity_overlap": {},
+        "nonempty": true,
+        "pair_overlap": {
+          "train_test": 0,
+          "train_val": 0,
+          "val_test": 0
+        },
+        "passed": true
+      },
+      "counts": {
+        "test": 13309,
+        "train": 39926,
+        "val": 13308
+      },
+      "fold": 2,
+      "n_excluded_pairs": 0
+    },
+    {
+      "audit": {
+        "entity_overlap": {},
+        "nonempty": true,
+        "pair_overlap": {
+          "train_test": 0,
+          "train_val": 0,
+          "val_test": 0
+        },
+        "passed": true
+      },
+      "counts": {
+        "test": 13308,
+        "train": 39927,
+        "val": 13308
+      },
+      "fold": 3,
+      "n_excluded_pairs": 0
+    },
+    {
+      "audit": {
+        "entity_overlap": {},
+        "nonempty": true,
+        "pair_overlap": {
+          "train_test": 0,
+          "train_val": 0,
+          "val_test": 0
+        },
+        "passed": true
+      },
+      "counts": {
+        "test": 13308,
+        "train": 39926,
+        "val": 13309
+      },
+      "fold": 4,
+      "n_excluded_pairs": 0
+    }
+  ],
+  "git_commit": "b735155edb575e409a964372b9647bf6591211e6",
+  "n_cells": 404,
+  "n_drugs": 184,
+  "n_pairs": 66543,
+  "options": {
+    "n_cell_clusters": 60,
+    "n_drug_clusters": 60,
+    "n_folds": 5,
+    "seed": 42,
+    "similarity_control": true
+  },
+  "protocol": "eval-lpo",
+  "source_files": {
+    "data/model/hetero_graph/cell_line_features.pt": "2108d46ecb01c87fbd1abfed6385f506b26dd0a6f99fcbb9bc717f5922ccdd7b",
+    "data/processed/cell_line_cancer_types.json": "cc15c760c18c6aab27d9247ece6e46e85ada0a2c0bc1136e229be76756f51fc4",
+    "data/processed/cell_line_to_idx.json": "72f4d1d513b79b582728827ed451015d0725c69c73c4142413e6a6cf3cb8af71",
+    "data/processed/drug_cid_to_idx.json": "78a2fdb4bad5c3e8928608ea7d6aab8cad1f4e1078cd200f898fedb05f9a6b3d",
+    "data/processed/drug_sensitivity/ic50_matrix.csv": "bb0e6f282524eefd725572722c54a1c770c2324d63d638978e9f59f7d34f4e0b"
+  },
+  "split_id": "eval-lpo"
+}

@@ -8,7 +8,7 @@ common_cl_path = PROJECT_ROOT / "data" / "common_cell_lines.csv"
 expr_raw_path = PROJECT_ROOT / "data" / "raw" / "cell_line_omics" / "DepMap_ExpressionTPMLogp1HumanProteinCodingGenes.csv"
 output_dir = PROJECT_ROOT / "data" / "processed" / "cell_line_omics"
 output_dir.mkdir(parents=True, exist_ok=True)
-output_path = output_dir / "expression_processed.csv"
+output_path = output_dir / "expression.csv"
 
 common_cl = pd.read_csv(common_cl_path)
 depmap_to_name = dict(zip(common_cl["depMapID"], common_cl["Name"]))

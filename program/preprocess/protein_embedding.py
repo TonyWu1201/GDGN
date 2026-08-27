@@ -1,8 +1,13 @@
-from Bio import SwissProt
-import torch
-from transformers import EsmModel, EsmTokenizer
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
 import numpy as np
+import torch
+from Bio import SwissProt
 from tqdm import tqdm
+from transformers import EsmModel, EsmTokenizer
 
 def parse_uniprot_dat(dat_path):
     """解析 UniProt DAT 文件，建立基因名 → 序列的映射"""
@@ -19,54 +24,43 @@ def parse_uniprot_dat(dat_path):
 
     return gene_to_seq
 
-# ===== 1. 加载 ESM-2 模型（仅需一次，约3-5 分钟） =====
-MODEL_NAME = "facebook/esm2_t33_650M_UR50D"  # 33层，6.5亿参数
-# 如果 GPU 显存不足，可以用轻量版：
-# MODEL_NAME = "facebook/esm2_t6_8M_UR50D"    # 6层，800万参数，推荐初学使用
-
-print("loading model")
-model = EsmModel.from_pretrained(MODEL_NAME)
-tokenizer = EsmTokenizer.from_pretrained(MODEL_NAME)
-print("loaded model")
-
-# 移到 GPU
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = model.to(device)
-model.eval()
-
-# ===== 2. 对单个蛋白质序列编码 =====
-def get_protein_embedding(sequence):
+@torch.no_grad()
+def get_protein_embedding(sequence, tokenizer, model, device, max_residues: int = 1022):
     """
     输入: 氨基酸序列字符串（如 'MRPSGTAGAA...'）
     输出: (1280,) 的 ESM-2 嵌入向量
     """
     # Tokenize：将氨基酸字母转为数字ID
-    inputs = tokenizer(sequence, return_tensors="pt", truncation=True, max_length=1024)
+    sequence = sequence[:max_residues]
+    inputs = tokenizer(sequence, return_tensors="pt", add_special_tokens=True)
     inputs = {k: v.to(device) for k, v in inputs.items()}
 
-    with torch.no_grad():
-        outputs = model(**inputs)
+    hidden = model(**inputs).last_hidden_state[0]
+    # ESM adds BOS/EOS tokens; only residue positions are pooled.
+    return hidden[1:1 + len(sequence)].mean(dim=0).cpu().numpy()
 
-    # 取所有位置的平均（也可以用 [CLS] token）
-    embedding = outputs.last_hidden_state.mean(dim=1)  # (1, 1280)
-    return embedding.squeeze(0).cpu().numpy()
 
-# ===== 3. 批量编码所有基因 =====
-protein_sequences = parse_uniprot_dat("data/uniprot_sprot.dat")
-embeddings = {}
-for gene, seq in tqdm(protein_sequences.items(), desc = "processing proteins"):
-    if seq:
-        emb = get_protein_embedding(seq)
-        embeddings[gene] = emb
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Build mean-pooled ESM embeddings without special tokens")
+    parser.add_argument("--uniprot", type=Path, default=Path("data/raw/protein_sequence/uniprot_sprot.dat"))
+    parser.add_argument("--model", default="facebook/esm2_t33_650M_UR50D")
+    parser.add_argument("--output-dir", type=Path, default=Path("data/processed/gene_embeddings"))
+    args = parser.parse_args()
+    print("loading model")
+    model = EsmModel.from_pretrained(args.model)
+    tokenizer = EsmTokenizer.from_pretrained(args.model)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device).eval()
+    protein_sequences = parse_uniprot_dat(args.uniprot)
+    gene_order = sorted(protein_sequences)
+    embeddings = [
+        get_protein_embedding(protein_sequences[gene], tokenizer, model, device)
+        for gene in tqdm(gene_order, desc="processing proteins")
+    ]
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    np.save(args.output_dir / "esm2_gene_embeddings.npy", np.stack(embeddings))
+    (args.output_dir / "gene_order.txt").write_text("\n".join(gene_order) + "\n", encoding="utf-8")
 
-# ===== 4. 保存嵌入矩阵（避免重复计算！） =====
-# 构建 (num_genes, 1280) 的矩阵
-gene_order = sorted(embeddings.keys())
-embedding_matrix = np.stack([embeddings[g] for g in gene_order])
 
-np.save("esm2_gene_embeddings.npy", embedding_matrix)
-
-# 保存基因顺序
-with open("gene_order.txt", 'w') as f:
-    for gene in gene_order:
-        f.write(f"{gene}\n")
+if __name__ == "__main__":
+    main()

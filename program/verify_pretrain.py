@@ -82,25 +82,20 @@ def build_encoders(ckpt_path: Path | None, hetero, cfg: SimpleNamespace, device,
     return encoder, ppi_pred, dti_pred, "pretrained"
 
 
-def eval_aucs(encoder, ppi_pred, dti_pred, hetero, clf, heldout, cfg, device) -> dict:
+def eval_aucs(encoder, ppi_pred, dti_pred, hetero, clf, heldout, sampler, cfg, device) -> dict:
     encoder.eval(); ppi_pred.eval(); dti_pred.eval()
     omics = inject_batch_omics(clf, torch.arange(min(cfg.eval_cell_batch_size, clf["expression"].shape[0])))
     omics_4 = torch.stack([omics["expr"], omics["mut"], omics["cnv"], omics["meth"]], dim=-1).to(device)
     omics_mean = omics_4.mean(dim=0, keepdim=True)
 
-    ppi_pos = heldout["ppi_pos"].to(device)
-    ppi_neg = heldout["ppi_neg"].to(device)
-    dti_pos = heldout["dti_pos"].to(device)
-    dti_neg = heldout["dti_neg"].to(device)
+    ppi_pos = heldout["ppi_test_pos"].to(device)
+    ppi_neg = heldout["ppi_test_neg"].to(device)
+    dti_pos = heldout["dti_test_pos"].to(device)
+    dti_neg = heldout["dti_test_neg"].to(device)
 
-    ppi_full_fwd = hetero["gene", "ppi", "gene"].edge_index
-    kh = ppi_full_fwd[0] <= ppi_full_fwd[1]
-    ppi_eval_fwd = ppi_full_fwd[:, kh]
-    ppi_eval_rev = ppi_full_fwd[:, ~kh]
-    if ppi_eval_rev.shape[1] == 0:
-        ppi_eval_rev = torch.stack([ppi_eval_fwd[1], ppi_eval_fwd[0]], dim=0)
-    dti_full_fwd = hetero["drug", "targets", "gene"].edge_index
-    dti_eval_rev = torch.stack([dti_full_fwd[1], dti_full_fwd[0]], dim=0)
+    ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev = (
+        edge.to(device) for edge in sampler.training_message_edges()
+    )
 
     with torch.no_grad():
         g_emb, d_emb = encoder.forward_single(hetero["gene"].x, hetero["drug"].x, omics_mean[0],
@@ -123,23 +118,18 @@ def eval_aucs(encoder, ppi_pred, dti_pred, hetero, clf, heldout, cfg, device) ->
     return out, g_emb, d_emb
 
 
-def dti_hits_at_k(encoder, dti_pred, hetero, clf, heldout, cfg, device, k: int = 10) -> dict:
+def dti_hits_at_k(encoder, dti_pred, hetero, clf, heldout, sampler, cfg, device, k: int = 10) -> dict:
     encoder.eval(); dti_pred.eval()
     omics = inject_batch_omics(clf, torch.arange(min(cfg.eval_cell_batch_size, clf["expression"].shape[0])))
     omics_4 = torch.stack([omics["expr"], omics["mut"], omics["cnv"], omics["meth"]], dim=-1).to(device)
     omics_mean = omics_4.mean(dim=0, keepdim=True)
-    ppi_full_fwd = hetero["gene", "ppi", "gene"].edge_index
-    kh = ppi_full_fwd[0] <= ppi_full_fwd[1]
-    ppi_eval_fwd = ppi_full_fwd[:, kh]
-    ppi_eval_rev = ppi_full_fwd[:, ~kh]
-    if ppi_eval_rev.shape[1] == 0:
-        ppi_eval_rev = torch.stack([ppi_eval_fwd[1], ppi_eval_fwd[0]], dim=0)
-    dti_full_fwd = hetero["drug", "targets", "gene"].edge_index
-    dti_eval_rev = torch.stack([dti_full_fwd[1], dti_full_fwd[0]], dim=0)
+    ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev = (
+        edge.to(device) for edge in sampler.training_message_edges()
+    )
     with torch.no_grad():
         g_emb, d_emb = encoder.forward_single(hetero["gene"].x, hetero["drug"].x, omics_mean[0],
                                                ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev)
-    heldout_pos = heldout["dti_pos"]
+    heldout_pos = heldout["dti_test_pos"]
     per_drug_rows = []
     unique_drugs = heldout_pos[0].unique().tolist()
     n_eval_total = 0; hits_total = 0
@@ -167,14 +157,9 @@ def recovered_dti_candidates(encoder, dti_pred, hetero, clf, sampler, cfg, devic
     omics = inject_batch_omics(clf, torch.arange(min(cfg.eval_cell_batch_size, clf["expression"].shape[0])))
     omics_4 = torch.stack([omics["expr"], omics["mut"], omics["cnv"], omics["meth"]], dim=-1).to(device)
     omics_mean = omics_4.mean(dim=0, keepdim=True)
-    ppi_full_fwd = hetero["gene", "ppi", "gene"].edge_index
-    kh = ppi_full_fwd[0] <= ppi_full_fwd[1]
-    ppi_eval_fwd = ppi_full_fwd[:, kh]
-    ppi_eval_rev = ppi_full_fwd[:, ~kh]
-    if ppi_eval_rev.shape[1] == 0:
-        ppi_eval_rev = torch.stack([ppi_eval_fwd[1], ppi_eval_fwd[0]], dim=0)
-    dti_full_fwd = hetero["drug", "targets", "gene"].edge_index
-    dti_eval_rev = torch.stack([dti_full_fwd[1], dti_full_fwd[0]], dim=0)
+    ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev = (
+        edge.to(device) for edge in sampler.training_message_edges()
+    )
     with torch.no_grad():
         g_emb, d_emb = encoder.forward_single(hetero["gene"].x, hetero["drug"].x, omics_mean[0],
                                                ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev)
@@ -212,7 +197,12 @@ def recovered_dti_candidates(encoder, dti_pred, hetero, clf, sampler, cfg, devic
 def embedding_stats(emb: torch.Tensor) -> dict:
     e = emb.detach().cpu().numpy()
     s = np.linalg.svd(e - e.mean(axis=0, keepdims=True), compute_uv=False)
-    eff_rank = float(np.exp(np.sum(np.log(s / s.sum() + 1e-12) * (s / s.sum() + 1e-12)))) if e.shape[0] > 1 else float("nan")
+    if e.shape[0] > 1 and s.sum() > 0:
+        probabilities = s / s.sum()
+        probabilities = probabilities[probabilities > 0]
+        eff_rank = float(np.exp(-np.sum(probabilities * np.log(probabilities))))
+    else:
+        eff_rank = float("nan")
     return {
         "shape": list(e.shape),
         "mean": float(e.mean()),
@@ -248,9 +238,19 @@ def write_report(path: Path, content: str):
     path.write_text(content, encoding="utf-8")
 
 
-def run(smoke: bool, ckpt: Path | None, random_only: bool, k_hits: int = 10):
+def run(
+    smoke: bool, ckpt: Path | None, random_only: bool, k_hits: int = 10,
+    split_id: str | None = None, fold: int | None = None,
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[verify] device={device} smoke={smoke} ckpt={ckpt}")
+    fold_scoped = split_id is not None
+    output_dir = ckpt.parent if fold_scoped and ckpt is not None else (PRETRAIN_DIR / "smoke" if smoke else PRETRAIN_DIR)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_txt = output_dir / "pretrain_report.txt"
+    hits_csv = output_dir / "hits_k_dti.csv"
+    recovered_csv = output_dir / "recovered_dti_candidates.csv"
+    tsne_png = output_dir / "tsne_gene_embeddings.png"
 
     hetero = load_hetero_graph(device=device)
     clf = load_cell_line_features(device=device)
@@ -272,17 +272,43 @@ def run(smoke: bool, ckpt: Path | None, random_only: bool, k_hits: int = 10):
         cfg = SimpleNamespace(hidden_dim=64, n_layers=2, heads_ppi=4, heads_dti=2, dropout=0.1,
                               eval_cell_batch_size=2, lambda_dti=10.0)
 
+    heldout_path = HELDOUT_PT
+    if fold_scoped:
+        if fold is None:
+            raise ValueError("fold is required with split_id")
+        from program.strict_eval.data import load_fold_features
+        from program.strict_eval.graph_policies import apply_dti_visibility
+        from program.strict_eval.io import read_json
+
+        split_path = _PROJECT_ROOT / f"data/model/splits/{split_id}/fold-{fold:02d}.json"
+        split_payload = read_json(split_path)
+        features, drug_features, _ = load_fold_features(
+            split_payload, output_dir, allow_legacy_fallback=smoke
+        )
+        train_cells = split_payload["splits"]["train"]["cell_idx"]
+        clf = {
+            name: value[train_cells].to(device)
+            for name, value in features.items()
+        }
+        hetero["drug"].x = drug_features.to(device)
+        hetero = apply_dti_visibility(
+            hetero, set(split_payload["splits"]["train"]["drug_idx"])
+        ).to(device)
+        heldout_path = output_dir / "edge_split_strict.pt"
+
     sampler = EdgeMaskSampler(hetero, cfg)
-    heldout = sampler.load_or_build_heldout(HELDOUT_PT)
+    heldout = sampler.load_or_build_heldout(heldout_path)
 
     enc_target, ppi_pred, dti_pred, target_name = build_encoders(ckpt if not random_only else None, hetero, cfg, device, random_only=random_only)
     print(f"[verify] target encoder = {target_name}")
 
-    metrics_target, g_emb, d_emb = eval_aucs(enc_target, ppi_pred, dti_pred, hetero, clf, heldout, cfg, device)
+    metrics_target, g_emb, d_emb = eval_aucs(
+        enc_target, ppi_pred, dti_pred, hetero, clf, heldout, sampler, cfg, device
+    )
     print(f"[verify] {target_name} AUC/AP PPI: {metrics_target['auc_ppi']:.4f} / {metrics_target['ap_ppi']:.4f}  "
           f"DTI: {metrics_target['auc_dti']:.4f} / {metrics_target['ap_dti']:.4f}")
 
-    if not smoke and not random_only:
+    if not smoke and not random_only and not fold_scoped:
         enc_random = PretrainGNNEncoder(
             gene_static_dim=int(hetero["gene"].x.shape[1]),
             drug_dim=int(hetero["drug"].x.shape[1]),
@@ -292,7 +318,9 @@ def run(smoke: bool, ckpt: Path | None, random_only: bool, k_hits: int = 10):
         ).to(device)
         _e2 = PPIEdgePredictor(cfg.hidden_dim, inner_dim=min(128, cfg.hidden_dim * 2)).to(device)
         _d2 = DTIConditionedPredictor(cfg.hidden_dim, 4, inner_dim=min(128, cfg.hidden_dim * 2)).to(device)
-        m_random, _, _ = eval_aucs(enc_random, _e2, _d2, hetero, clf, heldout, cfg, device)
+        m_random, _, _ = eval_aucs(
+            enc_random, _e2, _d2, hetero, clf, heldout, sampler, cfg, device
+        )
         print(f"[verify] random_init AUC/AP PPI: {m_random['auc_ppi']:.4f} / {m_random['ap_ppi']:.4f}  "
               f"DTI: {m_random['auc_dti']:.4f} / {m_random['ap_dti']:.4f}")
     else:
@@ -303,29 +331,31 @@ def run(smoke: bool, ckpt: Path | None, random_only: bool, k_hits: int = 10):
     hits_summary = None
     hits_rows_csv = []
     if not smoke:
-        hits_summary = dti_hits_at_k(enc_target, dti_pred, hetero, clf, heldout, cfg, device, k=k_hits)
+        hits_summary = dti_hits_at_k(
+            enc_target, dti_pred, hetero, clf, heldout, sampler, cfg, device, k=k_hits
+        )
         print(f"[verify] DTI Hits@{k_hits}: {hits_summary['hits_at_k']:.4f} "
               f"n_drugs={hits_summary['n_drugs_eval']} n_eval={hits_summary['n_eval_total']}")
         for row in hits_summary["rows"]:
             hits_rows_csv.append([row["drug_idx"], row["n_true"], row["hits_in_k"], row["hits_in_k"] / max(1, row["n_true"])])
-        with open(HITS_CSV, "w", newline="", encoding="utf-8") as f:
+        with open(hits_csv, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f); w.writerow(["drug_idx", "n_true", "hits", "hit_ratio"])
             w.writerows(hits_rows_csv)
-        print(f"[verify] hits saved to {HITS_CSV}")
+        print(f"[verify] hits saved to {hits_csv}")
 
     recovery_rows = None
     if not smoke and not random_only:
         recovery_rows = recovered_dti_candidates(enc_target, dti_pred, hetero, clf, sampler, cfg, device, k=k_hits)
-        with open(RECOVERED_CSV, "w", newline="", encoding="utf-8") as f:
+        with open(recovered_csv, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f); w.writerow(["drug_idx", "drug_cid", "top_gene_idx", "top_gene_symbol", "top_scores"])
             for r in recovery_rows:
                 w.writerow([r["drug_idx"], r["drug_cid"], r["top_gene_idx"], r["top_gene_symbol"], r["top_scores"]])
-        print(f"[verify] recovery candidates ({len(recovery_rows)} drugs) saved to {RECOVERED_CSV}")
+        print(f"[verify] recovery candidates ({len(recovery_rows)} drugs) saved to {recovered_csv}")
 
     tsne_path = None
     if not smoke:
         core_gene_order = CORE_GENE_ORDER_TXT.read_text().splitlines() if CORE_GENE_ORDER_TXT.exists() else []
-        tsne_path = TSNE_PNG
+        tsne_path = tsne_png
         tsne_visualization(g_emb, core_gene_order, tsne_path)
 
     lines = []
@@ -350,7 +380,7 @@ def run(smoke: bool, ckpt: Path | None, random_only: bool, k_hits: int = 10):
         lines.append(f"  {kk}: {vv}")
     if recovery_rows:
         lines.append(f"== DTI 候选恢复 ==")
-        lines.append(f"  n_no_dti_drugs={len(recovery_rows)} top_k={k_hits} saved to {RECOVERED_CSV}")
+        lines.append(f"  n_no_dti_drugs={len(recovery_rows)} top_k={k_hits} saved to {recovered_csv}")
     lines.append("")
     lines.append("== 验收标准 (计划 §7.8) ==")
     accept_lines = []
@@ -361,8 +391,8 @@ def run(smoke: bool, ckpt: Path | None, random_only: bool, k_hits: int = 10):
         accept_lines.append(f"  [{'OK' if hits_summary['hits_at_k']>0.5 else 'NA'}] DTI Hits@10 > 0.5 (actual {hits_summary['hits_at_k']:.4f})")
     accept_lines.append(f"  [{'OK' if stat_target['std']>0 and stat_target['std']<10 else 'NA'}] 嵌入 std 不为 0 / 不爆炸 (std={stat_target['std']:.4f})")
     lines.extend(accept_lines)
-    write_report(REPORT_TXT, "\n".join(lines))
-    print(f"[verify] report saved to {REPORT_TXT}")
+    write_report(report_txt, "\n".join(lines))
+    print(f"[verify] report saved to {report_txt}")
     print("[verify] DONE")
 
 
@@ -371,9 +401,16 @@ def main():
     ap.add_argument("--ckpt", type=str, default=str(BEST_ENCODER_PT), help="path to best_encoder.pt")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--random_only", action="store_true")
+    ap.add_argument("--split-id")
+    ap.add_argument("--fold", type=int)
     args = ap.parse_args()
     ckpt = Path(args.ckpt) if args.ckpt else None
-    run(smoke=args.smoke, ckpt=ckpt, random_only=args.random_only)
+    if (args.split_id is None) != (args.fold is None):
+        raise ValueError("--split-id and --fold must be supplied together")
+    run(
+        smoke=args.smoke, ckpt=ckpt, random_only=args.random_only,
+        split_id=args.split_id, fold=args.fold,
+    )
 
 
 if __name__ == "__main__":

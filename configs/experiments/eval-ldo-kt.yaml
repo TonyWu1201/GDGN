@@ -1,0 +1,19 @@
+experiment_id: eval-ldo-kt
+split_id: eval-ldo-kt
+model_id: model-m3
+fold: 0
+seed: 42
+batch_size: 32
+max_epochs: 50
+early_stopping_patience: 10
+lr_patience: 3
+lr: 0.001
+weight_decay: 0.00001
+grad_clip: 1.0
+hidden_dim: 128
+dropout: 0.2
+modalities: [expression, mutation, copynumber, methylation]
+graph_policy: graph-real
+gene_feature_mode: esm-mean
+pretrain_ckpt: null
+deterministic: false

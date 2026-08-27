@@ -1,0 +1,16 @@
+protocols: [eval-lco, eval-ldo-kt, eval-ldo-so, eval-db]
+models: [gdgn]
+folds: [0, 1, 2, 3, 4]
+seeds: [42, 3407, 8128]
+base_overrides:
+  pretrain_ckpt: data/model/pretrain/strict/{split_id}/fold-{fold:02d}/seed-{seed:04d}/best_encoder.pt
+  use_main_drug_emb: false
+  cell_bypass_mode: residual
+  learnable_alpha: true
+  dual_cell: true
+variants:
+  esm-none: {gene_feature_mode: esm-none}
+  esm-random: {gene_feature_mode: esm-random}
+  esm-id: {gene_feature_mode: esm-id}
+  esm-mean: {gene_feature_mode: esm-mean}
+  esm-parti: {gene_feature_mode: esm-parti, esm_parti_path: data/processed/gene_embeddings/esm2_parti_gene_embeddings.pt}

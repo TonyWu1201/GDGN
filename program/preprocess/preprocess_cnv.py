@@ -2,13 +2,13 @@ import pandas as pd
 import re
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 common_cl_path = PROJECT_ROOT / "data" / "common_cell_lines.csv"
 cnv_raw_path = PROJECT_ROOT / "data" / "raw" / "cell_line_omics" / "DepMap_CNGeneWGS.csv"
-output_dir = PROJECT_ROOT / "data" / "processed"
+output_dir = PROJECT_ROOT / "data" / "processed" / "cell_line_omics"
 output_dir.mkdir(parents=True, exist_ok=True)
-output_path = output_dir / "cnv_processed.csv"
+output_path = output_dir / "copynumber.csv"
 
 common_cl = pd.read_csv(common_cl_path)
 depmap_to_name = dict(zip(common_cl["depMapID"], common_cl["Name"]))

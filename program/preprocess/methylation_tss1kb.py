@@ -54,15 +54,17 @@ keep_sites = col_missing[col_missing <= 0.3].index
 meth_matrix = meth_matrix[keep_sites]
 print(f"缺失率过滤后位点数: {meth_matrix.shape[1]}")
 
-# 剩余缺失用列中位数填充
-meth_matrix = meth_matrix.fillna(meth_matrix.median())
+# ===== 7. 保存未填补、未标准化矩阵，供严格训练折内预处理 =====
+meth_matrix = meth_matrix.sort_index()
+meth_matrix.to_csv("data/processed/cell_line_omics/methylation_raw.csv")
 
-# ===== 7. Z-score 标准化（按列） =====
+# Legacy artifact for old checkpoints. Ver2 never reads this artifact in formal runs.
 from sklearn.preprocessing import StandardScaler
 
 scaler = StandardScaler()
+meth_imputed = meth_matrix.fillna(meth_matrix.median())
 meth_scaled = pd.DataFrame(
-    scaler.fit_transform(meth_matrix),
+    scaler.fit_transform(meth_imputed),
     index=meth_matrix.index,
     columns=meth_matrix.columns,
 ).sort_index()

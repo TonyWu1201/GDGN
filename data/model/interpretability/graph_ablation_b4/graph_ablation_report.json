@@ -1,0 +1,83 @@
+[
+  {
+    "mode": "original",
+    "desc": "no change",
+    "pcc": 0.9353523108606621,
+    "spearman": 0.9067543084236868,
+    "rmse": 1.0388717547107829,
+    "n": 6655,
+    "dt_sec": 271.7
+  },
+  {
+    "mode": "permute_ppi",
+    "desc": "ppi permuted (336392 edges)",
+    "pcc": 0.8524525463134178,
+    "spearman": 0.775931377939729,
+    "rmse": 2.2193466877552166,
+    "n": 6655,
+    "dt_sec": 270.2
+  },
+  {
+    "mode": "permute_dti",
+    "desc": "dti permuted (1124 edges)",
+    "pcc": 0.9012606426427703,
+    "spearman": 0.8697435848038884,
+    "rmse": 1.5601560161707206,
+    "n": 6655,
+    "dt_sec": 268.9
+  },
+  {
+    "mode": "permute_both",
+    "desc": "ppi+dti permuted",
+    "pcc": 0.8839738945555367,
+    "spearman": 0.8405747399192789,
+    "rmse": 2.0333668047514664,
+    "n": 6655,
+    "dt_sec": 266.0
+  },
+  {
+    "mode": "remove_ppi",
+    "desc": "ppi removed (self-loops only)",
+    "pcc": 0.7895511912942987,
+    "spearman": 0.8368132943795829,
+    "rmse": 2.4795555031510066,
+    "n": 6655,
+    "dt_sec": 38.9
+  },
+  {
+    "mode": "remove_dti",
+    "desc": "dti removed (dummy edge)",
+    "pcc": 0.865133456340544,
+    "spearman": 0.8338556958779254,
+    "rmse": 2.356035822696185,
+    "n": 6655,
+    "dt_sec": 246.5
+  },
+  {
+    "mode": "remove_both",
+    "desc": "ppi+dti removed",
+    "pcc": 0.7871536259032744,
+    "spearman": 0.836561113704136,
+    "rmse": 2.490552636860901,
+    "n": 6655,
+    "dt_sec": 36.7
+  },
+  {
+    "mode": "shuffle_gene_x",
+    "desc": "gene static x shuffled",
+    "pcc": 0.9350088672517445,
+    "spearman": 0.906359046242757,
+    "rmse": 1.0395704171980564,
+    "n": 6655,
+    "dt_sec": 228.5
+  },
+  {
+    "mode": "shuffle_drug_x",
+    "desc": "drug node x shuffled",
+    "pcc": 0.8743373658856608,
+    "spearman": 0.846767963508457,
+    "rmse": 1.980006726943379,
+    "n": 6655,
+    "dt_sec": 228.6
+  }
+]

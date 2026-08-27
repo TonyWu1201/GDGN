@@ -11,6 +11,7 @@ OUTPUT_DIR = PROJECT_ROOT / "data" / "processed" / "driver&pathway"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 ACTIVITY_OUTPUT = OUTPUT_DIR / "pathway_activity.npy"
+RAW_ACTIVITY_OUTPUT = OUTPUT_DIR / "pathway_activity_raw.npy"
 NAMES_OUTPUT = OUTPUT_DIR / "pathway_names.txt"
 
 
@@ -41,7 +42,10 @@ def ssgsea(
             ranks = np.argsort(sorted_idx)
 
             ranks_in_gs = ranks[gs_indices]
-            r_alpha = np.power(np.abs(ranks_in_gs.astype(np.float64)), alpha)
+            # Highest expression must receive the largest rank weight.  The
+            # legacy implementation used rank=0 directly and accidentally
+            # treated the top gene as a miss in the running-sum branch.
+            r_alpha = np.power((n_genes - ranks_in_gs).astype(np.float64), alpha)
             sum_r_alpha = r_alpha.sum()
             incr = r_alpha / sum_r_alpha if sum_r_alpha > 0 else np.zeros_like(r_alpha)
 
@@ -81,6 +85,7 @@ def main():
 
     activity = ssgsea(expr, gene_names, pathway_sets, alpha=0.25)
     print(f"Pathway activity matrix shape: {activity.shape}")
+    np.save(RAW_ACTIVITY_OUTPUT, activity.astype(np.float32))
 
     pathway_names = list(pathway_sets.keys())
 
@@ -97,6 +102,7 @@ def main():
             f.write(name + "\n")
 
     print(f"Saved activity matrix to: {ACTIVITY_OUTPUT}")
+    print(f"Saved unscaled activity matrix to: {RAW_ACTIVITY_OUTPUT}")
     print(f"Saved pathway names to: {NAMES_OUTPUT}")
 
 

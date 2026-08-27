@@ -1,0 +1,74 @@
+[
+  {
+    "mode": "original",
+    "desc": "no change",
+    "pcc": 0.9190789019035102,
+    "spearman": 0.8860919026278476,
+    "rmse": 1.153252359740921,
+    "n": 6655,
+    "dt_sec": 228.3
+  },
+  {
+    "mode": "original",
+    "desc": "no change",
+    "pcc": 0.9190789022150168,
+    "spearman": 0.8860919026278476,
+    "rmse": 1.1532523572731794,
+    "n": 6655,
+    "dt_sec": 228.3
+  },
+  {
+    "mode": "permute_ppi",
+    "desc": "ppi permuted (336392 edges)",
+    "pcc": 0.9188757968463819,
+    "spearman": 0.8859143110924879,
+    "rmse": 1.1552073111361136,
+    "n": 6655,
+    "dt_sec": 227.8
+  },
+  {
+    "mode": "permute_dti",
+    "desc": "dti permuted (1124 edges)",
+    "pcc": 0.9186763160705835,
+    "spearman": 0.8857280451637067,
+    "rmse": 1.156567781368135,
+    "n": 6655,
+    "dt_sec": 228.0
+  },
+  {
+    "mode": "permute_both",
+    "desc": "ppi+dti permuted",
+    "pcc": 0.9188973195309335,
+    "spearman": 0.8859434647870676,
+    "rmse": 1.1546251659495201,
+    "n": 6655,
+    "dt_sec": 227.9
+  },
+  {
+    "mode": "remove_ppi",
+    "desc": "ppi removed (self-loops only)",
+    "pcc": 0.9183789281649006,
+    "spearman": 0.8852860102054748,
+    "rmse": 1.1588729333366155,
+    "n": 6655,
+    "dt_sec": 36.7
+  },
+  {
+    "mode": "remove_dti",
+    "desc": "dti removed (dummy edge)",
+    "pcc": 0.9181863304606207,
+    "spearman": 0.8846787861180302,
+    "rmse": 1.1630606608627119,
+    "n": 6655,
+    "dt_sec": 227.2
+  },
+  {
+    "mode": "remove_both",
+    "desc": "ppi+dti removed",
+    "pcc": 0.9182497447284155,
+    "spearman": 0.8846803629469387,
+    "rmse": 1.1622682873398624,
+    "n": 6655,
+    "dt_sec": 35.7
+  }
+]

@@ -36,7 +36,6 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from program.model.dataset import load_hetero_graph, load_cell_line_features, inject_batch_omics
 from program.model.edge_mask import EdgeMaskSampler, HELDOUT_PT, PRETRAIN_DIR
-from program.model.graph_utils import split_full_edges
 from program.model.pretrain_dataloader import PretrainCellSampler, get_n_cells
 from program.model.pretrain_encoder import PretrainGNNEncoder
 from program.model.edge_predictor import PPIEdgePredictor, DTIConditionedPredictor
@@ -52,7 +51,7 @@ CFG_JSON = PRETRAIN_DIR / "pretrain_used_config.json"
 
 def _default_full_cfg() -> dict:
     return dict(
-        hidden_dim=128, n_layers=2, heads_ppi=4, heads_dti=2, dropout=0.3,
+        hidden_dim=256, n_layers=2, heads_ppi=4, heads_dti=2, dropout=0.3,
         lr=1e-4, weight_decay=1e-5, lambda_dti=10.0, pos_weight_ppi=1.0, pos_weight_dti=1.0,
         mask_ppi_ratio=0.20, mask_dti_ratio=0.40, neg_ratio=1.0,
         heldout_ppi_ratio=0.01, heldout_dti_ratio=0.20,
@@ -92,7 +91,7 @@ def load_config(path: Path | None, smoke: bool, cli_overrides: dict) -> SimpleNa
     else:
         d = _default_full_cfg()
     for k, v in cli_overrides.items():
-        if v is not None and k in d:
+        if v is not None:
             d[k] = v
     return cfg_to_namespace(d)
 
@@ -111,6 +110,9 @@ def evaluate_on_heldout(
     heldout: dict,
     cfg: SimpleNamespace,
     device: torch.device,
+    sampler: EdgeMaskSampler,
+    split: str = "val",
+    cell_indices: list[int] | None = None,
 ) -> dict:
     """用 mean-over-cells 的 omics 作单一参考条件 (条件无关 vs BatchNorm 部分), 单次前向 -> 边预测 -> AUC/AP."""
     encoder.eval()
@@ -118,19 +120,24 @@ def evaluate_on_heldout(
     dti_pred.eval()
 
     n_genes = int(hetero["gene"].num_nodes)
-    eval_b = max(1, min(cfg.eval_cell_batch_size, clf["expression"].shape[0]))
-    eval_cells = torch.arange(eval_b, device="cpu")
+    candidates = cell_indices if cell_indices is not None else list(range(clf["expression"].shape[0]))
+    eval_b = max(1, min(cfg.eval_cell_batch_size, len(candidates)))
+    eval_cells = torch.tensor(candidates[:eval_b], device="cpu")
     omics = inject_batch_omics(clf, eval_cells)
     omics_4 = omics_to_per_gene(omics).to(device)
     omics_mean = omics_4.mean(dim=0, keepdim=True)
 
-    ppi_pos = heldout["ppi_pos"].to(device)
-    ppi_neg = heldout["ppi_neg"].to(device)
-    dti_pos = heldout["dti_pos"].to(device)
-    dti_neg = heldout["dti_neg"].to(device)
+    if split not in {"val", "test"}:
+        raise ValueError(f"split must be val or test, got {split}")
+    ppi_pos = heldout[f"ppi_{split}_pos"].to(device)
+    ppi_neg = heldout[f"ppi_{split}_neg"].to(device)
+    dti_pos = heldout[f"dti_{split}_pos"].to(device)
+    dti_neg = heldout[f"dti_{split}_neg"].to(device)
 
-    # 在评估时不再 mask 可见边 (用全 PPI/全 DTI 作 GNN 消息传递); 拆分用公共 helper
-    ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev = split_full_edges(hetero)
+    # Strict protocol: validation/test positives never enter message passing.
+    ppi_eval_fwd, ppi_eval_rev, dti_full_fwd, dti_eval_rev = (
+        edge.to(device) for edge in sampler.training_message_edges()
+    )
 
     gene_static = hetero["gene"].x
     drug_x = hetero["drug"].x
@@ -246,27 +253,56 @@ def save_checkpoint(path: Path, encoder: torch.nn.Module, ppi_pred: torch.nn.Mod
 
 
 def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -> dict:
+    cfg.smoke = bool(smoke)
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[pretrain] device={device} smoke={smoke}")
     print(f"[pretrain] cfg = {json.dumps(vars(cfg), ensure_ascii=False)}")
+    output_dir = Path(getattr(cfg, "output_dir", PRETRAIN_DIR / "smoke" if smoke else PRETRAIN_DIR))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    best_encoder_path = output_dir / "best_encoder.pt"
+    best_predictors_path = output_dir / "best_predictors.pt"
+    log_path = output_dir / "pretrain_log.json"
+    config_path = output_dir / "pretrain_used_config.json"
 
     hetero = load_hetero_graph(device)
     clf = load_cell_line_features(device)
-    gene_static = hetero["gene"].x
-    drug_x = hetero["drug"].x
     n_genes = int(hetero["gene"].num_nodes)
     n_drugs = int(hetero["drug"].num_nodes)
-    n_cells = int(clf["expression"].shape[0])
+    cell_indices = list(range(int(clf["expression"].shape[0])))
+    heldout_path = HELDOUT_PT
+    response_split_path = getattr(cfg, "response_split_path", None)
+    if response_split_path:
+        from program.strict_eval.data import load_fold_features
+        from program.strict_eval.graph_policies import apply_dti_visibility
+        from program.strict_eval.io import read_json
+
+        split_payload = read_json(response_split_path)
+        fold_features, fold_drug_features, _ = load_fold_features(
+            split_payload, output_dir, allow_legacy_fallback=smoke
+        )
+        clf = {**clf, **{name: value.to(device) for name, value in fold_features.items()}}
+        hetero["drug"].x = fold_drug_features.to(device)
+        cell_indices = split_payload["splits"]["train"]["cell_idx"]
+        hetero = apply_dti_visibility(
+            hetero, set(split_payload["splits"]["train"]["drug_idx"])
+        ).to(device)
+        heldout_path = output_dir / "edge_split_strict.pt"
+    gene_static = hetero["gene"].x
+    drug_x = hetero["drug"].x
+    n_cells = len(cell_indices)
 
     if not hasattr(cfg, "metrics_combine"):
         cfg.metrics_combine = "weighted"
 
     sampler = EdgeMaskSampler(hetero, cfg)
-    heldout = sampler.load_or_build_heldout(HELDOUT_PT)
+    heldout = sampler.load_or_build_heldout(heldout_path)
 
-    cell_sampler = PretrainCellSampler(n_cells=n_cells, batch_condition=cfg.batch_condition, seed=cfg.seed)
+    cell_sampler = PretrainCellSampler(
+        n_cells=len(clf["expression"]), batch_condition=cfg.batch_condition,
+        seed=cfg.seed, cell_indices=cell_indices,
+    )
 
     encoder = PretrainGNNEncoder(
         gene_static_dim=gene_static.shape[1],
@@ -342,7 +378,10 @@ def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -
                 break
 
         train_mean = {k: float(np.mean([s[k] for s in step_stats])) for k in ("loss_total", "loss_ppi", "loss_dti")}
-        val_metrics = evaluate_on_heldout(encoder, ppi_pred, dti_pred, hetero, clf, heldout, cfg, device)
+        val_metrics = evaluate_on_heldout(
+            encoder, ppi_pred, dti_pred, hetero, clf, heldout, cfg, device, sampler,
+            split="val", cell_indices=cell_indices,
+        )
         sched.step(val_metrics["auc"])
         log_records.append({
             "epoch": epoch,
@@ -355,10 +394,10 @@ def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -
 
         if val_metrics["auc"] > best_auc:
             best_auc = val_metrics["auc"]
-            save_checkpoint(BEST_ENCODER_PT, encoder, ppi_pred, dti_pred, opt, epoch, val_metrics, cfg)
-            torch.save({"ppi": ppi_pred.state_dict(), "dti": dti_pred.state_dict()}, BEST_PREDICTORS_PT)
+            save_checkpoint(best_encoder_path, encoder, ppi_pred, dti_pred, opt, epoch, val_metrics, cfg)
+            torch.save({"ppi": ppi_pred.state_dict(), "dti": dti_pred.state_dict()}, best_predictors_path)
             patience_left = cfg.patience
-            print(f"[checkpoint] new best auc={best_auc:.4f} saved to {BEST_ENCODER_PT}")
+            print(f"[checkpoint] new best auc={best_auc:.4f} saved to {best_encoder_path}")
         else:
             patience_left -= 1
             print(f"[early-stop] patience left = {patience_left}")
@@ -366,9 +405,9 @@ def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -
                 print("[early-stop] triggered; stopping")
                 break
 
-    final_log_path = Path(LOG_JSON)
+    final_log_path = log_path
     final_log_path.write_text(json.dumps({"records": log_records, "cfg": vars(cfg)}, ensure_ascii=False, indent=2))
-    Path(CFG_JSON).write_text(json.dumps(vars(cfg), ensure_ascii=False, indent=2))
+    config_path.write_text(json.dumps(vars(cfg), ensure_ascii=False, indent=2))
     print(f"[pretrain] DONE best_auc={best_auc:.4f} log={final_log_path}")
     return {"best_auc": best_auc, "n_epochs_logged": len(log_records), "record_last": (log_records[-1] if log_records else None)}
 
@@ -381,6 +420,10 @@ def main():
     ap.add_argument("--batch_condition", type=int, default=None)
     ap.add_argument("--hidden_dim", type=int, default=None)
     ap.add_argument("--lambda_dti", type=float, default=None)
+    ap.add_argument("--split-id")
+    ap.add_argument("--fold", type=int)
+    ap.add_argument("--seed", type=int)
+    ap.add_argument("--output-dir", type=Path)
     args = ap.parse_args()
 
     cfg_path = Path(args.config) if args.config else None
@@ -389,9 +432,17 @@ def main():
         "batch_condition": args.batch_condition,
         "hidden_dim": args.hidden_dim,
         "lambda_dti": args.lambda_dti,
+        "seed": args.seed,
+        "output_dir": str(args.output_dir) if args.output_dir else None,
     }
     cli_overrides = {k: v for k, v in cli_overrides.items() if v is not None}
     cfg = load_config(cfg_path, args.smoke, cli_overrides)
+    if (args.split_id is None) != (args.fold is None):
+        raise ValueError("--split-id and --fold must be supplied together")
+    if args.split_id is not None:
+        cfg.response_split_path = str(
+            _PROJECT_ROOT / f"data/model/splits/{args.split_id}/fold-{args.fold:02d}.json"
+        )
     if not hasattr(cfg, "metrics_combine"):
         cfg.metrics_combine = "weighted"
     run_train(cfg, smoke=args.smoke)

@@ -1,0 +1,18 @@
+==============================================================================
+Graph structure ablation (inference-time perturbation)
+ckpt: data/model/ablation/04_no_pretrain/best_model.pt
+device: cuda
+==============================================================================
+mode                  PCC      dPCC  Spearman      RMSE       Nnote                          
+original           0.9191   +0.0000    0.8861    1.1533    6655no change                     
+original           0.9191   +0.0000    0.8861    1.1533    6655no change                     
+permute_ppi        0.9189   -0.0002    0.8859    1.1552    6655ppi permuted (336392 edges)   
+permute_dti        0.9187   -0.0004    0.8857    1.1566    6655dti permuted (1124 edges)     
+permute_both       0.9189   -0.0002    0.8859    1.1546    6655ppi+dti permuted              
+remove_ppi         0.9184   -0.0007    0.8853    1.1589    6655ppi removed (self-loops only) 
+remove_dti         0.9182   -0.0009    0.8847    1.1631    6655dti removed (dummy edge)      
+remove_both        0.9182   -0.0008    0.8847    1.1623    6655ppi+dti removed               
+
+[Note] 推理时扰动口径: 权重在原图上训练, 扰动只测推理是否依赖
+边的具体连接. PCC 显著下降 -> 图结构被利用; 几乎不变 -> 预测不依赖
+图 (训练级消融需重训无图变体, 见 guidance/Phase5可解释性分析规划.md).

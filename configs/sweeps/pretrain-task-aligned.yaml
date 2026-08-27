@@ -1,0 +1,22 @@
+protocols: [eval-lco, eval-ldo-kt, eval-ldo-so, eval-db]
+models: [model-m0]
+folds: [0, 1, 2, 3, 4]
+seeds: [42, 3407, 8128]
+variants:
+  random-init:
+    modalities: [expression, copynumber, methylation]
+    omics_pretrain_ckpt: null
+    omics_finetune_policy: full
+  pretrained-freeze:
+    modalities: [expression, copynumber, methylation]
+    omics_pretrain_ckpt: data/model/pretrain-masked-omics/{split_id}/fold-{fold:02d}/seed-{seed:04d}/checkpoint-best.pt
+    omics_finetune_policy: freeze
+  pretrained-full:
+    modalities: [expression, copynumber, methylation]
+    omics_pretrain_ckpt: data/model/pretrain-masked-omics/{split_id}/fold-{fold:02d}/seed-{seed:04d}/checkpoint-best.pt
+    omics_finetune_policy: full
+  pretrained-staged:
+    modalities: [expression, copynumber, methylation]
+    omics_pretrain_ckpt: data/model/pretrain-masked-omics/{split_id}/fold-{fold:02d}/seed-{seed:04d}/checkpoint-best.pt
+    omics_finetune_policy: staged
+    omics_unfreeze_epoch: 5

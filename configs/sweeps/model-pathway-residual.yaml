@@ -1,0 +1,4 @@
+protocols: [eval-lco, eval-ldo-kt, eval-ldo-so, eval-db]
+models: [model-m0, model-m1, model-m2, model-m3, model-m4]
+folds: [0, 1, 2, 3, 4]
+seeds: [42, 3407, 8128]

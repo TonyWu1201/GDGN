@@ -1,0 +1,11 @@
+experiment_id: interpret-faithfulness
+eligible_scope: all test drugs with mapped targets and at least 5 response samples
+case_selection: sensitive-and-resistant-extremes
+ig_baselines: [train-mean, zero]
+ig_steps: 50
+deletion_fractions: [0.01, 0.05, 0.10, 0.20]
+controls: [random, expression-and-ppi-degree-matched]
+attention_randomizations: 100
+enrichment_sets: [known-targets, ppi-one-hop, ppi-two-hop, pathways]
+multiple_testing: benjamini-hochberg
+require_pathway_recompute: true

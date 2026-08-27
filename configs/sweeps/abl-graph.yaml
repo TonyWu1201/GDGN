@@ -1,0 +1,11 @@
+protocols: [eval-lco, eval-ldo-kt, eval-ldo-so, eval-db]
+models: [model-m2]
+folds: [0, 1, 2, 3, 4]
+seeds: [42, 3407, 8128]
+variants:
+  graph-none: {graph_policy: graph-none}
+  graph-real: {graph_policy: graph-real}
+  graph-degree: {graph_policy: graph-degree}
+  graph-random: {graph_policy: graph-random}
+  graph-weight-shuffle: {graph_policy: graph-weight-shuffle}
+  graph-pathway: {graph_policy: graph-pathway}
