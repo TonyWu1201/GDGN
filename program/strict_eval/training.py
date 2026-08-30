@@ -170,9 +170,11 @@ def _predict_neural(
     dti_policy: str,
     unseen_cells: set[int],
     unseen_drugs: set[int],
+    micro_batch: int = 0,
 ) -> pd.DataFrame:
     model.eval()
     rows = {key: [] for key in ("pair_id", "cell_idx", "drug_idx", "y_true", "y_pred")}
+    forward_kwargs = {"micro_batch": micro_batch} if micro_batch else {}
     with torch.no_grad():
         for batch in loader:
             cell_idx = batch["cell_idx"].to(device)
@@ -188,7 +190,7 @@ def _predict_neural(
             elif model_id in PATHWAY_MODELS:
                 pred, _ = model(cell_idx, drug_idx, dti_policy=dti_policy)
             else:
-                pred, _ = model(cell_idx, drug_idx, _omics_batch(cell_features, batch["cell_idx"], device))
+                pred, _ = model(cell_idx, drug_idx, _omics_batch(cell_features, batch["cell_idx"], device), **forward_kwargs)
             rows["pair_id"].extend(batch["pair_id"].tolist())
             rows["cell_idx"].extend(batch["cell_idx"].tolist())
             rows["drug_idx"].extend(batch["drug_idx"].tolist())
@@ -258,6 +260,7 @@ def _fit_neural(
     seed_everything(int(config["seed"]), deterministic=bool(config.get("deterministic", False)))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model_id = config["model_id"]
+    micro_batch = int(config.get("micro_batch", 0) or 0)
     full_graph = load_hetero_graph("cpu")
     full_graph["drug"].x = drug_features
     graph_policy = config.get("graph_policy", "graph-real")
@@ -314,6 +317,8 @@ def _fit_neural(
                 extras = {}
             elif model_id in PATHWAY_MODELS:
                 pred, extras = model(cell_idx, drug_idx, dti_policy=split_payload["graph_policy"])
+            elif model_id in LEGACY_MODELS and hasattr(model, "forward") and "micro_batch" in model.forward.__code__.co_varnames:
+                pred, extras = model(cell_idx, drug_idx, _omics_batch(cell_features, batch["cell_idx"], device), micro_batch=micro_batch)
             else:
                 pred, extras = model(cell_idx, drug_idx, _omics_batch(cell_features, batch["cell_idx"], device))
             loss = F.mse_loss(pred.squeeze(-1), y)
@@ -342,6 +347,7 @@ def _fit_neural(
             model, loaders["val"], model_id, cell_features, device, split_payload["graph_policy"],
             set(split_payload["splits"]["val"]["cell_idx"]) - train_cells,
             set(split_payload["splits"]["val"]["drug_idx"]) - train_drugs,
+            micro_batch=micro_batch,
         )
         val_metrics = full_metric_bundle(val_pred)["global"]
         pcc = float(val_metrics["pcc"])
@@ -385,6 +391,7 @@ def _fit_neural(
             model, loaders[split], model_id, cell_features, device, split_payload["graph_policy"],
             set(split_payload["splits"][split]["cell_idx"]) - train_cells,
             set(split_payload["splits"][split]["drug_idx"]) - train_drugs,
+            micro_batch=micro_batch,
         )
         output["split"] = split
         output = _attach_metadata(output, frames[split])

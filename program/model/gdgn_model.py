@@ -175,6 +175,7 @@ class GDGNModel(nn.Module):
         cell_idx: torch.Tensor,
         drug_idx: torch.Tensor,
         omics: dict,
+        micro_batch: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """端到端前向.
 
@@ -184,12 +185,36 @@ class GDGNModel(nn.Module):
         drug_idx : (B,) LongTensor
         omics : dict from inject_batch_omics(clf, cell_idx)
             {'expr','mut','cnv','meth' 各 (B, 8412); 'pathway' (B, 186)}
+        micro_batch : int | None
+            None 时整批前向 (原 Phase 4 行为); >0 时把 batch 按 micro_batch 切块,
+            逐块 (encoder + predictor) 前向, 输出等价于整批 (BN/Dropout 除外),
+            峰值激活显存与 micro_batch 成正比, 用于大图 GAT 下的 OOM 缓解.
 
         Returns
         -------
         ic50_pred : (B, 1)
         attn_weights : (B, 1, N_gene)   use_main_drug_emb=False 时也无 None
         """
+        B = int(cell_idx.shape[0])
+        if not micro_batch or micro_batch >= B:
+            return self._forward_batch(cell_idx, drug_idx, omics)
+        preds, attns = [], []
+        for start in range(0, B, micro_batch):
+            stop = min(start + micro_batch, B)
+            micro_omics = {key: value[start:stop] for key, value in omics.items()}
+            p_slice, a_slice = self._forward_batch(
+                cell_idx[start:stop], drug_idx[start:stop], micro_omics
+            )
+            preds.append(p_slice)
+            attns.append(a_slice)
+        return torch.cat(preds, dim=0), torch.cat(attns, dim=0)
+
+    def _forward_batch(
+        self,
+        cell_idx: torch.Tensor,
+        drug_idx: torch.Tensor,
+        omics: dict,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         omics_4 = omics_to_per_gene(omics).to(self._device)
         gene_emb, main_drug_emb = self.gene_enc(self.gene_x_static, self.drug_x, omics_4)
         drug_emb = drug_encoder_forward_batch(self.drug_enc, drug_idx, self.drug_mol_graphs, self._device)

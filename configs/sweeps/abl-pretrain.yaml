@@ -3,7 +3,7 @@ models: [gdgn]
 folds: [0, 1, 2, 3, 4]
 seeds: [42, 3407, 8128]
 base_overrides:
-  batch_size: 16
+  micro_batch: 4
   cell_bypass_mode: residual
   learnable_alpha: true
   dual_cell: true
