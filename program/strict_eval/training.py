@@ -315,19 +315,57 @@ def _fit_neural(
             if model_id == "id-mlp":
                 pred = model(cell_idx, drug_idx)
                 extras = {}
+                loss = F.mse_loss(pred.squeeze(-1), y)
             elif model_id in PATHWAY_MODELS:
                 pred, extras = model(cell_idx, drug_idx, dti_policy=split_payload["graph_policy"])
-            elif model_id in LEGACY_MODELS and hasattr(model, "forward") and "micro_batch" in model.forward.__code__.co_varnames:
-                pred, extras = model(cell_idx, drug_idx, _omics_batch(cell_features, batch["cell_idx"], device), micro_batch=micro_batch)
+                loss = F.mse_loss(pred.squeeze(-1), y)
+                if model_id == "model-m4" and split_payload["graph_policy"] == "structure-only":
+                    target = model.known_target_pathways[drug_idx]
+                    logits = model.target_predictor(model.drug_features[drug_idx])
+                    loss = loss + float(config.get("target_aux_weight", 0.1)) * F.binary_cross_entropy_with_logits(
+                        logits, (target > 0).float()
+                    )
+            elif micro_batch > 1 and model_id in LEGACY_MODELS:
+                # Gradient accumulation: backward per micro chunk so GAT activations
+                # are freed after each chunk; gradients sum to the full-batch loss.
+                optimizer.zero_grad()
+                chunk_losses = []
+                total = int(cell_idx.shape[0])
+                for start in range(0, total, micro_batch):
+                    stop = min(start + micro_batch, total)
+                    micro_omics = _omics_batch(cell_features, batch["cell_idx"][start:stop], device)
+                    pred, extras = model(
+                        cell_idx[start:stop], drug_idx[start:stop], micro_omics
+                    )
+                    chunk_loss = F.mse_loss(pred.squeeze(-1), y[start:stop], reduction="sum")
+                    if model_id == "model-m4" and split_payload["graph_policy"] == "structure-only":
+                        target = model.known_target_pathways[drug_idx[start:stop]]
+                        logits = model.target_predictor(model.drug_features[drug_idx[start:stop]])
+                        chunk_loss = chunk_loss + (
+                            float(config.get("target_aux_weight", 0.1))
+                            * stop * F.binary_cross_entropy_with_logits(
+                                logits, (target > 0).float()
+                            )
+                        )
+                    (chunk_loss / total).backward()
+                    chunk_losses.append(float(chunk_loss.item()) / stop)
+                loss_value = float(np.mean(chunk_losses))
+                losses.append(loss_value)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), float(config.get("grad_clip", 1.0)))
+                optimizer.step()
+                batch_bar.set_postfix(loss=loss_value)
+                if smoke and step >= 1:
+                    break
+                continue
             else:
                 pred, extras = model(cell_idx, drug_idx, _omics_batch(cell_features, batch["cell_idx"], device))
-            loss = F.mse_loss(pred.squeeze(-1), y)
-            if model_id == "model-m4" and split_payload["graph_policy"] == "structure-only":
-                target = model.known_target_pathways[drug_idx]
-                logits = model.target_predictor(model.drug_features[drug_idx])
-                loss = loss + float(config.get("target_aux_weight", 0.1)) * F.binary_cross_entropy_with_logits(
-                    logits, (target > 0).float()
-                )
+                loss = F.mse_loss(pred.squeeze(-1), y)
+                if model_id == "model-m4" and split_payload["graph_policy"] == "structure-only":
+                    target = model.known_target_pathways[drug_idx]
+                    logits = model.target_predictor(model.drug_features[drug_idx])
+                    loss = loss + float(config.get("target_aux_weight", 0.1)) * F.binary_cross_entropy_with_logits(
+                        logits, (target > 0).float()
+                    )
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(config.get("grad_clip", 1.0)))
