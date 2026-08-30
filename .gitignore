@@ -35,6 +35,8 @@ data/model/experiments/**
 !data/model/experiments/.gitkeep
 data/model/smoke/
 data/model/pretrain/smoke/
+data/model/local-logs/
+data/model/pretrain/strict/
 data/model/hetero_graph/cell_line_features_raw.pt
 data/model/hetero_graph/drug_features_raw.pt
 data/processed/cell_line_omics/methylation_raw.csv

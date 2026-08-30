@@ -22,9 +22,9 @@
 - copynumber: shape=(404, 8412), finite=True
 - methylation: shape=(404, 8412), finite=True
 - pathway_activity: shape=(404, 186), finite=True
-- Strict unscaled cell artifact ready: False
-- Strict unscaled drug artifact ready: False
-- Raw cell preprocessing status: `{}`
+- Strict unscaled cell artifact ready: True
+- Strict unscaled drug artifact ready: True
+- Raw cell preprocessing status: `{"methylation_source": "data\\processed\\cell_line_omics\\methylation_raw.csv", "pathway_source": "data\\processed\\driver&pathway\\pathway_activity_raw.npy", "strict_unscaled": true}`
 
 ## Source checksums
 
@@ -32,13 +32,13 @@
 - `data/processed/protein_protein_interaction/ppi_dg_filtered.csv`: `0c010d118c453ba8048d612b8281d2998560c41a15cd2e35ae07e5ac6106c07f`
 - `data/processed/drug_gene_interaction/interactions_filtered.csv`: `c63e9474ea014fef5bf66ac6de45a50c8398ee6abb4d9fb8de1b133788bcd9e8`
 - `data/model/hetero_graph/hetero_graph_base.pt`: `1bf1b7ac1d5a96411893029cc772bcb6fbc301faf376e7078b3c64cd32dc5d52`
-- `data/model/hetero_graph/cell_line_features.pt`: `2108d46ecb01c87fbd1abfed6385f506b26dd0a6f99fcbb9bc717f5922ccdd7b`
-- `data/model/splits/eval-db/manifest.json`: `42f66903fbd08f1de094fa54e0f7e15e8d82ec8dc802b546ce97d8011dc8ff9b`
-- `data/model/splits/eval-lco/manifest.json`: `2d3d93a29c843c5ac7d6e62f8182c177340886a4c2a6bbd2949f16f084ef9368`
-- `data/model/splits/eval-ldo-kt/manifest.json`: `179b7ff93a2c2afdbfe7027873731552a3a28a7f11e251405ea19b5b978b72b2`
-- `data/model/splits/eval-ldo-so/manifest.json`: `1611aba793b1ee710d9fda9f69b9d3ddce0df9038bab38265b9265b9828cd92b`
-- `data/model/splits/eval-lpo/manifest.json`: `98ded79904740c608a3e93402b78c3091692535448ce2ca70c0c353717f4e02b`
-- `data/model/splits/eval-lto/manifest.json`: `8616bb61605f762757b6cb2da6c809aa1a9005427f19014a747a3dce333063b7`
+- `data/model/hetero_graph/cell_line_features.pt`: `b59fdba3bc844fe673707a7caf12472542f23e72ce998d751694e924651822fe`
+- `data/model/splits/eval-db/manifest.json`: `4498dfed9f133a0ba7ef2561ab8625380214626f2a1cd065503ebc34ef5af61f`
+- `data/model/splits/eval-lco/manifest.json`: `cdeedd0340a356283774e059840c2a70d71aa86b03c9b66ca739d9c49e6e2054`
+- `data/model/splits/eval-ldo-kt/manifest.json`: `0bcac945ccecfb4b928926843835d61fe217ecd1a129d5227e5b251f6839910a`
+- `data/model/splits/eval-ldo-so/manifest.json`: `2682d9c72d53513b06dfbae6ddec4090934707538c495e67c3222c5876b4326a`
+- `data/model/splits/eval-lpo/manifest.json`: `a6766a047e463ef812ea83d519b0c1d9f1f0350813e87f7651702e7b82a159af`
+- `data/model/splits/eval-lto/manifest.json`: `159013ed97ddcdb853c59438c9b652897b9b8119d7c2be03e121581017dcc557`
 
 ## Leakage policy
 

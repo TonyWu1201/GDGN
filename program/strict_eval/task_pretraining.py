@@ -35,6 +35,12 @@ def train_masked_omics(
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    checkpoint_path = output / "checkpoint-best.pt"
+    if checkpoint_path.exists() and not smoke:
+        report = {"skipped": True, "checkpoint": str(checkpoint_path)}
+        write_json(output / "metrics.json", report)
+        print(f"[masked-omics] SKIP: 已有检查点 {checkpoint_path}")
+        return report
     values = values.float()
     if train_idx is None or val_idx is None:
         permutation = torch.randperm(len(values), generator=torch.Generator().manual_seed(seed))

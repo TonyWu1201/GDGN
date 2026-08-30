@@ -12,6 +12,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from sklearn.decomposition import PCA
+from tqdm import tqdm
 
 from program.model.dataset import load_hetero_graph
 from program.model.train_gdgn import build_model as build_legacy_model
@@ -302,7 +303,9 @@ def _fit_neural(
                 parameter.requires_grad_(True)
         model.train()
         losses = []
-        for step, batch in enumerate(loaders["train"]):
+        batch_bar = tqdm(enumerate(loaders["train"]), total=len(loaders["train"]),
+                         desc=f"[train] epoch {epoch}", unit="batch", leave=False)
+        for step, batch in batch_bar:
             cell_idx = batch["cell_idx"].to(device)
             drug_idx = batch["drug_idx"].to(device)
             y = batch["y"].to(device)
@@ -325,8 +328,10 @@ def _fit_neural(
             torch.nn.utils.clip_grad_norm_(model.parameters(), float(config.get("grad_clip", 1.0)))
             optimizer.step()
             losses.append(float(loss.item()))
+            batch_bar.set_postfix(loss=float(loss.item()))
             if smoke and step >= 1:
                 break
+        batch_bar.close()
 
         if model_id in LEGACY_MODELS:
             val_allowed = train_drugs | set(split_payload["splits"]["val"]["drug_idx"])
@@ -354,6 +359,10 @@ def _fit_neural(
             patience_left -= 1
             if patience_left <= 0:
                 break
+        for instance in list(tqdm._instances):
+            if not instance.disable:
+                instance.clear()
+                instance.close()
 
     if best_state is None:
         best_state = copy.deepcopy({key: value.detach().cpu() for key, value in model.state_dict().items()})

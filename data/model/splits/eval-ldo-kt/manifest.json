@@ -119,7 +119,7 @@
       "n_excluded_pairs": 0
     }
   ],
-  "git_commit": "b735155edb575e409a964372b9647bf6591211e6",
+  "git_commit": "5293a26d70dd89077e73d8c13dfedd77d399116e",
   "n_cells": 404,
   "n_drugs": 184,
   "n_pairs": 66543,
@@ -132,7 +132,7 @@
   },
   "protocol": "eval-ldo-kt",
   "source_files": {
-    "data/model/hetero_graph/cell_line_features.pt": "2108d46ecb01c87fbd1abfed6385f506b26dd0a6f99fcbb9bc717f5922ccdd7b",
+    "data/model/hetero_graph/cell_line_features.pt": "b59fdba3bc844fe673707a7caf12472542f23e72ce998d751694e924651822fe",
     "data/processed/cell_line_cancer_types.json": "cc15c760c18c6aab27d9247ece6e46e85ada0a2c0bc1136e229be76756f51fc4",
     "data/processed/cell_line_to_idx.json": "72f4d1d513b79b582728827ed451015d0725c69c73c4142413e6a6cf3cb8af71",
     "data/processed/drug_cid_to_idx.json": "78a2fdb4bad5c3e8928608ea7d6aab8cad1f4e1078cd200f898fedb05f9a6b3d",

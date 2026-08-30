@@ -14,6 +14,7 @@ models:
   - gdgn
 model_overrides:
   gdgn:
+    batch_size: 16
     pretrain_ckpt: data/model/pretrain/strict/{split_id}/fold-{fold:02d}/seed-{seed:04d}/best_encoder.pt
     use_main_drug_emb: false
     cell_bypass_mode: residual

@@ -29,6 +29,7 @@ from types import SimpleNamespace
 import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score, average_precision_score
+from tqdm import tqdm
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
@@ -262,6 +263,13 @@ def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -
     output_dir = Path(getattr(cfg, "output_dir", PRETRAIN_DIR / "smoke" if smoke else PRETRAIN_DIR))
     output_dir.mkdir(parents=True, exist_ok=True)
     best_encoder_path = output_dir / "best_encoder.pt"
+    if best_encoder_path.exists() and not getattr(cfg, "force", False):
+        log_path = output_dir / "pretrain_log.json"
+        best_auc = None
+        if log_path.exists():
+            best_auc = json.loads(log_path.read_text()).get("records", [{}])[-1].get("val", {}).get("auc")
+        print(f"[pretrain] SKIP: 已有检查点 {best_encoder_path}（force=1 可强制重跑）best_auc={best_auc}")
+        return {"best_auc": best_auc, "n_epochs_logged": None, "record_last": None, "skipped": True}
     best_predictors_path = output_dir / "best_predictors.pt"
     log_path = output_dir / "pretrain_log.json"
     config_path = output_dir / "pretrain_used_config.json"
@@ -335,7 +343,9 @@ def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -
         encoder.train(); ppi_pred.train(); dti_pred.train()
         epoch_t0 = time.time()
         step_stats = []
-        for step, cell_batch in enumerate(cell_sampler):
+        step_bar = tqdm(enumerate(cell_sampler), total=len(cell_sampler),
+                        desc=f"[pretrain] {output_dir.name} epoch {epoch}", unit="step", leave=False)
+        for step, cell_batch in step_bar:
             t0 = time.time()
             ppi = sampler.sample_ppi()
             dti = sampler.sample_dti()
@@ -369,13 +379,12 @@ def run_train(cfg: SimpleNamespace, smoke: bool, wall_log: dict | None = None) -
                 torch.nn.utils.clip_grad_norm_(encoder.parameters(), cfg.clip_grad)
             opt.step()
             step_stats.append(stats)
-            elapsed = time.time() - t0
-            if step == 0 or (step + 1) % max(1, (len(cell_sampler) // 4)) == 0 or smoke:
-                print(f"[epoch {epoch}] step {step+1}/{len(cell_sampler)} B={B} "
-                      f"loss={stats['loss_total']:.4f} ppi={stats['loss_ppi']:.4f} dti={stats['loss_dti']:.4f} dt={elapsed:.1f}s")
+            step_bar.set_postfix(loss=stats["loss_total"], ppi=stats["loss_ppi"], dti=stats["loss_dti"], dt=time.time() - t0)
             if max_steps is not None and step + 1 >= max_steps:
+                step_bar.close()
                 print(f"[.epoch {epoch}] smoke mode: hit max_steps_per_epoch={max_steps}, breaking step loop")
                 break
+        step_bar.close()
 
         train_mean = {k: float(np.mean([s[k] for s in step_stats])) for k in ("loss_total", "loss_ppi", "loss_dti")}
         val_metrics = evaluate_on_heldout(
@@ -424,6 +433,7 @@ def main():
     ap.add_argument("--fold", type=int)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--output-dir", type=Path)
+    ap.add_argument("--force", action="store_true", help="re-train even if a checkpoint already exists")
     args = ap.parse_args()
 
     cfg_path = Path(args.config) if args.config else None
@@ -434,6 +444,7 @@ def main():
         "lambda_dti": args.lambda_dti,
         "seed": args.seed,
         "output_dir": str(args.output_dir) if args.output_dir else None,
+        "force": args.force,
     }
     cli_overrides = {k: v for k, v in cli_overrides.items() if v is not None}
     cfg = load_config(cfg_path, args.smoke, cli_overrides)
